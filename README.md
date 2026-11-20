@@ -4,7 +4,7 @@ Reimplementação em Delégua do [pacote-go](https://github.com/DesignLiquido/pa
 
 ## Situação
 
-Esta primeira etapa traz as partes de lógica pura, portadas dos pacotes `interno/*` do pacote-go, com os testes em Go como especificação:
+Portado até agora, dos pacotes `interno/*` do pacote-go, com os testes em Go como especificação:
 
 | Arquivo | Origem no pacote-go | Conteúdo |
 | --- | --- | --- |
@@ -14,8 +14,9 @@ Esta primeira etapa traz as partes de lógica pura, portadas dos pacotes `intern
 | `fontes/modelos.delegua` | `interno/modelos/pacoteca.go` | `pacoteca.jsonc` e respostas da pacoteca-api |
 | `fontes/trava.delegua` | `interno/trava/trava.go` | Leitura e gravação do `pacoteca.lock`, no mesmo formato do Go |
 | `fontes/resolvedor.delegua` | `interno/resolvedor/resolvedor.go` | Resolução de dependências transitivas |
+| `fontes/git.delegua` | `interno/git/repositorio.go` | Instalação a partir do repositório git, fixada em um commit |
 
-Ainda faltam o cliente da pacoteca-api, a parte de git e os comandos da linha de comando.
+Ainda faltam o cliente da pacoteca-api, o instalador, a autenticação e os comandos da linha de comando.
 
 ## Diferenças em relação ao pacote-go
 
@@ -24,6 +25,7 @@ Ainda faltam o cliente da pacoteca-api, a parte de git e os comandos da linha de
 - No `pacoteca.lock`, uma lista de realizações vazia é gravada como `[]` (o Go grava `null` para lista nula). Fora isso, a serialização é idêntica à do Go, byte a byte.
 - `Fonte` (resolvedor) é uma classe concreta que guarda os pacotes em memória; o cliente da pacoteca-api preencherá a mesma estrutura.
 - Os campos JSON `tipo` de símbolos e argumentos viram `categoria` e `tipoDado`, porque `tipo` é palavra reservada.
+- O git é usado pelo programa `git` (precisa estar instalado e no PATH), e não por uma biblioteca como o go-git.
 
 ## Testes
 

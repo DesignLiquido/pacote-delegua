@@ -1,0 +1,147 @@
+// Porte de interno/git/repositorio_test.go do pacote-go. O repositório de origem é criado
+// com o programa `git` em um diretório temporário ao lado dos testes.
+importar { Verificador } de "./verificador"
+importar { ClienteGit, ErroGit, ErroAlteracoesLocais, instalado, jaInstalado } de "../fontes/git"
+
+var v = Verificador("git")
+var arquivos = importar("arquivos")
+var processo = importar("processo")
+
+var base = arquivos.juntarCaminhos(arquivos.diretorioAtual(), "tmp-git-teste")
+arquivos.remover(base)
+arquivos.criarDiretorio(base)
+
+var git = ClienteGit()
+git.silencioso = verdadeiro
+
+// Executa o git com uma identidade fixa (os commits do teste não dependem da configuração
+// do usuário) e falha o teste se ele não terminar bem.
+funcao gitTeste(argumentos: texto[], diretorio: texto): texto {
+    var processo = importar("processo")
+    var completos: texto[] = ["-c", "user.name=teste", "-c", "user.email=teste@exemplo", "-c", "init.defaultBranch=principal", "-c", "core.autocrlf=false"]
+    para cada argumento em argumentos {
+        completos.adicionar(argumento)
+    }
+    var saida: texto = processo.executarCapturando("git", completos, diretorio)
+    se processo.ultimoCodigoSaida() != 0 {
+        falhar ErroGit("git " + argumentos.juntar(" ") + " falhou em " + diretorio)
+    }
+    retorna saida.aparar()
+}
+
+// Repositório com dois commits: v1.0.0 (tag anotada) no primeiro e v2.0.0 (leve) no segundo.
+classe Origem {
+    url: texto
+    primeiro: texto
+    segundo: texto
+
+    construtor(url: texto, primeiro: texto, segundo: texto) {
+        isto.url = url
+        isto.primeiro = primeiro
+        isto.segundo = segundo
+    }
+}
+
+funcao criarOrigem(diretorio: texto): Origem {
+    var arquivos = importar("arquivos")
+    arquivos.criarDiretorio(diretorio)
+    gitTeste(["init", "--quiet"], diretorio)
+    var arquivo = arquivos.juntarCaminhos(diretorio, "pacote.delegua")
+
+    arquivos.escreverTexto(arquivo, "versao 1")
+    gitTeste(["add", "pacote.delegua"], diretorio)
+    gitTeste(["commit", "--quiet", "-m", "versao 1"], diretorio)
+    var primeiro = gitTeste(["rev-parse", "HEAD"], diretorio)
+    gitTeste(["tag", "-a", "v1.0.0", "-m", "v1"], diretorio)
+
+    arquivos.escreverTexto(arquivo, "versao 2")
+    gitTeste(["add", "pacote.delegua"], diretorio)
+    gitTeste(["commit", "--quiet", "-m", "versao 2"], diretorio)
+    var segundo = gitTeste(["rev-parse", "HEAD"], diretorio)
+    gitTeste(["tag", "v2.0.0"], diretorio)
+
+    // URL file:// (e não o caminho) para que o clone raso funcione como num servidor remoto.
+    var url = "file://" + diretorio.substituir("\\", "/")
+    se nao url.comecaCom("file:///") {
+        url = "file:///" + url.subtexto(7, url.tamanho())
+    }
+    retorna Origem(url, primeiro, segundo)
+}
+
+funcao lerConteudo(destino: texto): texto {
+    var arquivos = importar("arquivos")
+    var conteudo: texto = arquivos.lerTexto(arquivos.juntarCaminhos(destino, "pacote.delegua"))
+    se conteudo == nulo {
+        retorna "(ausente)"
+    }
+    retorna conteudo
+}
+
+// Mensagem do erro de clonarCommit ("" se deu certo); o tipo do erro vai na frente.
+funcao erroAoClonar(git: ClienteGit, url: texto, destino: texto, tag: texto, hash: texto): texto {
+    tente {
+        git.clonarCommit(url, destino, tag, hash)
+    } pegue (erro: ErroAlteracoesLocais) {
+        retorna "ErroAlteracoesLocais: " + erro.mensagem
+    } pegue (erro: ErroGit) {
+        retorna "ErroGit: " + erro.mensagem
+    }
+    retorna ""
+}
+
+var origem = criarOrigem(arquivos.juntarCaminhos(base, "origem"))
+v.verificar(origem.primeiro.tamanho() == 40 e origem.segundo.tamanho() == 40, "repositório de origem criado")
+
+// TestClonarCommitPorTag
+var pacotes = arquivos.juntarCaminhos(arquivos.juntarCaminhos(base, "pacotes"), "node")
+var destino = arquivos.juntarCaminhos(pacotes, "mat")
+v.verificar(git.clonarCommit(origem.url, destino, "v1.0.0", origem.primeiro) == instalado(), "v1 instalada")
+v.igual(lerConteudo(destino), "versao 1", "conteúdo da v1")
+v.verificar(arquivos.existe(arquivos.juntarCaminhos(arquivos.juntarCaminhos(destino, ".git"), "shallow")), "tag no commit esperado usa clone raso")
+v.verificar(git.clonarCommit(origem.url, destino, "v1.0.0", origem.primeiro) == jaInstalado(), "reinstalação no mesmo commit não faz nada")
+v.verificar(git.clonarCommit(origem.url, destino, "v2.0.0", origem.segundo) == instalado(), "atualiza para a v2")
+v.igual(lerConteudo(destino), "versao 2", "conteúdo da v2")
+var entradas: texto[] = arquivos.listarDiretorio(pacotes)
+v.igual(entradas.juntar(","), "mat", "diretórios temporários removidos")
+
+// TestClonarCommitTagMovidaUsaOHash: a tag v2.0.0 aponta para o segundo commit, mas o
+// registro fixou o primeiro.
+var destinoMovida = arquivos.juntarCaminhos(base, "movida")
+git.clonarCommit(origem.url, destinoMovida, "v2.0.0", origem.primeiro)
+v.igual(lerConteudo(destinoMovida), "versao 1", "instala o commit fixado, não o apontado pela tag")
+v.verificar(nao arquivos.existe(arquivos.juntarCaminhos(arquivos.juntarCaminhos(destinoMovida, ".git"), "shallow")), "tag movida usa clone completo")
+
+// TestClonarCommitInexistente
+var destinoInexistente = arquivos.juntarCaminhos(base, "inexistente")
+var hashInexistente = "abababababababababababababababababababab"
+v.contem(erroAoClonar(git, origem.url, destinoInexistente, "v1.0.0", hashInexistente), "não existe", "commit inexistente")
+v.verificar(nao arquivos.existe(destinoInexistente), "falha não deixa o destino criado")
+
+// TestClonarCommitPreservaAlteracoesLocais
+var destinoEditado = arquivos.juntarCaminhos(base, "editado")
+git.clonarCommit(origem.url, destinoEditado, "v1.0.0", origem.primeiro)
+arquivos.escreverTexto(arquivos.juntarCaminhos(destinoEditado, "pacote.delegua"), "editado")
+v.contem(erroAoClonar(git, origem.url, destinoEditado, "v2.0.0", origem.segundo), "ErroAlteracoesLocais", "alterações locais")
+v.igual(lerConteudo(destinoEditado), "editado", "alterações locais preservadas")
+
+// Arquivo novo (não rastreado) também conta como alteração local.
+var destinoNovo = arquivos.juntarCaminhos(base, "novo")
+git.clonarCommit(origem.url, destinoNovo, "v1.0.0", origem.primeiro)
+arquivos.escreverTexto(arquivos.juntarCaminhos(destinoNovo, "meu.txt"), "x")
+v.contem(erroAoClonar(git, origem.url, destinoNovo, "v2.0.0", origem.segundo), "ErroAlteracoesLocais", "arquivo novo é alteração local")
+
+// TestClonarCommitNaoSubstituiDiretorioComum
+var destinoComum = arquivos.juntarCaminhos(base, "comum")
+arquivos.criarDiretorio(destinoComum)
+arquivos.escreverTexto(arquivos.juntarCaminhos(destinoComum, "meu.txt"), "x")
+v.contem(erroAoClonar(git, origem.url, destinoComum, "v1.0.0", origem.primeiro), "não é um clone instalado pelo pacote", "diretório comum não é substituído")
+v.verificar(arquivos.existe(arquivos.juntarCaminhos(destinoComum, "meu.txt")), "arquivo do usuário preservado")
+
+// TestClonarCommitHashInvalido
+var invalidos: texto[] = ["", "abc", "zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz", "0000000000000000000000000000000000000000", "ABABABABABABABABABABABABABABABABABABABAB"]
+para cada hash em invalidos {
+    v.contem(erroAoClonar(git, "x", arquivos.juntarCaminhos(base, "invalido"), "v1", hash), "hash de commit inválido", "\"" + hash + "\" deveria ser recusado")
+}
+
+arquivos.remover(base)
+v.finalizar()

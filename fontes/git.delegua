@@ -1,0 +1,215 @@
+// Instalação de um pacote a partir do repositório git, fixada em um commit.
+//
+// Porte de interno/git/repositorio.go do pacote-go. O pacote-go usa a biblioteca go-git;
+// aqui o programa `git` é executado com o módulo `processo` (sem shell), então o git
+// precisa estar instalado e no PATH.
+
+classe ErroGit herda Excecao {
+    construtor(mensagem: texto) {
+        super.construtor(mensagem)
+    }
+}
+
+// O diretório de destino tem alterações que seriam perdidas.
+classe ErroAlteracoesLocais herda Excecao {
+    construtor(mensagem: texto) {
+        super.construtor(mensagem)
+    }
+}
+
+// Resultados de clonarCommit.
+// O destino já estava no commit pedido; nada foi feito.
+funcao jaInstalado(): inteiro {
+    retorna 0
+}
+
+// O destino foi criado ou substituído.
+funcao instalado(): inteiro {
+    retorna 1
+}
+
+// 40 dígitos hexadecimais minúsculos, não todos zero (como plumbing.NewHash no go-git).
+funcao ehHashCommit(hash: texto): lógico {
+    se hash.tamanho() != 40 {
+        retorna falso
+    }
+    var hexadecimais = "0123456789abcdef"
+    var todosZero = verdadeiro
+    para (var i = 0; i < hash.tamanho(); i = i + 1) {
+        var caractere: texto = hash[i]
+        se nao hexadecimais.inclui(caractere) {
+            retorna falso
+        }
+        se caractere != "0" {
+            todosZero = falso
+        }
+    }
+    retorna nao todosZero
+}
+
+classe ClienteGit {
+    // Repassa `--quiet` ao git (sem progresso do clone no terminal).
+    silencioso: lógico
+
+    construtor() {
+        isto.silencioso = falso
+    }
+
+    // Argumentos completos: desliga o aviso de "detached HEAD", que o checkout de uma tag
+    // ou de um commit imprime mesmo com --quiet.
+    argumentosGit(argumentos: texto[]): texto[] {
+        var completos: texto[] = ["-c", "advice.detachedHead=false"]
+        para cada argumento em argumentos {
+            completos.adicionar(argumento)
+        }
+        retorna completos
+    }
+
+    // Executa o git em `diretorio` ("" para o atual) e devolve o código de saída.
+    executar(argumentos: texto[], diretorio: texto): inteiro {
+        var processo = importar("processo")
+        var completos: texto[] = isto.argumentosGit(argumentos)
+        var codigo: inteiro = processo.executar("git", completos, diretorio)
+        retorna codigo
+    }
+
+    // Executa o git em `diretorio` e devolve a saída padrão, sem espaços nas pontas.
+    // Use processo.ultimoCodigoSaida() para saber se deu certo.
+    capturar(argumentos: texto[], diretorio: texto): texto {
+        var processo = importar("processo")
+        var completos: texto[] = isto.argumentosGit(argumentos)
+        var saida: texto = processo.executarCapturando("git", completos, diretorio)
+        retorna saida.aparar()
+    }
+
+    // Commit atual de um clone ("" se `diretorio` não é a raiz de um repositório git).
+    commitAtual(diretorio: texto): texto {
+        var arquivos = importar("arquivos")
+        var processo = importar("processo")
+        se nao arquivos.existe(arquivos.juntarCaminhos(diretorio, ".git")) {
+            retorna ""
+        }
+        var hash = isto.capturar(["rev-parse", "HEAD"], diretorio)
+        se processo.ultimoCodigoSaida() != 0 {
+            retorna ""
+        }
+        retorna hash
+    }
+
+    // Indica se a árvore de trabalho não tem alterações, inclusive arquivos novos.
+    arvoreLimpa(diretorio: texto): lógico {
+        var processo = importar("processo")
+        var estado = isto.capturar(["status", "--porcelain"], diretorio)
+        retorna processo.ultimoCodigoSaida() == 0 e estado == ""
+    }
+
+    clonarRaso(urlRepositorio: texto, destino: texto, tag: texto): lógico {
+        var argumentos: texto[] = ["clone", "--depth", "1", "--branch", tag, "--single-branch", "--no-tags"]
+        se isto.silencioso {
+            argumentos.adicionar("--quiet")
+        }
+        argumentos.adicionar(urlRepositorio)
+        argumentos.adicionar(destino)
+        retorna isto.executar(argumentos, "") == 0
+    }
+
+    // Deixa `destino` (ainda inexistente) no commit `esperado`. Tenta primeiro um clone
+    // raso da tag e confere se ela ainda aponta para o commit; se não apontar, ou se o
+    // servidor não suportar clones rasos, faz um clone completo e muda para o commit.
+    clonar(urlRepositorio: texto, destino: texto, tag: texto, esperado: texto) {
+        var arquivos = importar("arquivos")
+        se tag != "" {
+            se isto.clonarRaso(urlRepositorio, destino, tag) e isto.commitAtual(destino) == esperado {
+                retorna
+            }
+            // Tag movida, inexistente, ou clone raso não suportado: recomeça com clone completo.
+            arquivos.remover(destino)
+        }
+
+        var argumentos: texto[] = ["clone"]
+        se isto.silencioso {
+            argumentos.adicionar("--quiet")
+        }
+        argumentos.adicionar(urlRepositorio)
+        argumentos.adicionar(destino)
+        se isto.executar(argumentos, "") != 0 {
+            falhar ErroGit("erro ao clonar " + urlRepositorio)
+        }
+
+        var processo = importar("processo")
+        isto.capturar(["rev-parse", "--verify", "--quiet", esperado + "^{commit}"], destino)
+        se processo.ultimoCodigoSaida() != 0 {
+            falhar ErroGit("o commit " + esperado + " não existe em " + urlRepositorio)
+        }
+        var checkout: texto[] = ["checkout", "--force", "--detach"]
+        se isto.silencioso {
+            checkout.adicionar("--quiet")
+        }
+        checkout.adicionar(esperado)
+        se isto.executar(checkout, destino) != 0 {
+            falhar ErroGit("erro ao mudar para o commit " + esperado)
+        }
+    }
+
+    // Diretório temporário ainda inexistente ao lado de `destino`: "<pai>/.<nome>-<sufixo>".
+    caminhoTemporario(destino: texto): texto {
+        var arquivos = importar("arquivos")
+        var tempo = importar("tempo")
+        var prefixo = arquivos.juntarCaminhos(arquivos.diretorioPai(destino), "." + arquivos.nomeBase(destino) + "-")
+        var caminho = ""
+        var tentativa = 0
+        enquanto caminho == "" ou arquivos.existe(caminho) {
+            var marca: inteiro = tempo.monotonicoMilissegundos()
+            var sorteio: inteiro = aleatorioEntre(0, 1000000)
+            caminho = prefixo + texto(marca) + "-" + texto(sorteio) + "-" + texto(tentativa)
+            tentativa = tentativa + 1
+        }
+        retorna caminho
+    }
+
+    // Deixa `destino` com o conteúdo exato de `hashCommit` do repositório e devolve
+    // instalado() ou jaInstalado().
+    //
+    // O clone é feito em um diretório temporário e só então substitui o destino, para que
+    // uma falha no meio não deixe uma instalação pela metade. Se o destino já existe no
+    // commit pedido, nada é feito. Se existe com alterações locais, falha com
+    // ErroAlteracoesLocais em vez de descartá-las.
+    clonarCommit(urlRepositorio: texto, destino: texto, tag: texto, hashCommit: texto): inteiro {
+        var arquivos = importar("arquivos")
+        se nao ehHashCommit(hashCommit) {
+            falhar ErroGit("hash de commit inválido: \"" + hashCommit + "\"")
+        }
+
+        se arquivos.existe(destino) {
+            var atual = isto.commitAtual(destino)
+            se atual == "" {
+                falhar ErroGit(destino + " já existe e não é um clone instalado pelo pacote; remova-o para instalar")
+            }
+            se nao isto.arvoreLimpa(destino) {
+                falhar ErroAlteracoesLocais("o diretório tem alterações locais: " + destino + " (salve ou descarte as alterações antes de reinstalar)")
+            }
+            se atual == hashCommit {
+                retorna jaInstalado()
+            }
+            // Clone limpo em outro commit: será substituído.
+        }
+
+        var pai = arquivos.diretorioPai(destino)
+        se nao arquivos.criarDiretorio(pai) {
+            falhar ErroGit("erro ao criar o diretório " + pai)
+        }
+        var temporario = isto.caminhoTemporario(destino)
+        tente {
+            isto.clonar(urlRepositorio, temporario, tag, hashCommit)
+            se nao arquivos.remover(destino) {
+                falhar ErroGit("erro ao remover instalação anterior em " + destino)
+            }
+            se nao arquivos.renomear(temporario, destino) {
+                falhar ErroGit("erro ao mover clone para " + destino)
+            }
+        } finalmente {
+            arquivos.remover(temporario)
+        }
+        retorna instalado()
+    }
+}
