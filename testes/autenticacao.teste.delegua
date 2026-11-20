@@ -1,0 +1,78 @@
+// Testes de fontes/autenticacao.delegua (o pacote-go não tem testes para
+// interno/autenticacao). O retorno do login é testado no mesmo processo: o cliente conecta
+// e envia a requisição antes de o servidor aceitar (o sistema completa a conexão na fila).
+importar { Verificador } de "./verificador"
+importar { salvarToken, carregarToken, removerToken, caminhoToken, parametroDaQuery, RetornoAutenticacao, ErroAutenticacao } de "../fontes/autenticacao"
+
+var v = Verificador("autenticacao")
+var arquivos = importar("arquivos")
+var rede = importar("rede")
+
+var pessoal = arquivos.juntarCaminhos(arquivos.diretorioAtual(), "tmp-autenticacao-teste")
+arquivos.remover(pessoal)
+arquivos.criarDiretorio(pessoal)
+
+funcao erroAoCarregar(pessoal: texto): texto {
+    tente {
+        carregarToken(pessoal)
+    } pegue (erro: ErroAutenticacao) {
+        retorna erro.mensagem
+    }
+    retorna ""
+}
+
+// Token
+v.contem(erroAoCarregar(pessoal), "não autenticado — execute: pacote autenticar", "sem token")
+salvarToken(pessoal, "  jwt-de-teste\n")
+v.igual(carregarToken(pessoal), "jwt-de-teste", "token salvo sem espaços")
+var gravado: texto = arquivos.lerTexto(caminhoToken(pessoal))
+v.igual(gravado, "jwt-de-teste", "conteúdo do arquivo")
+arquivos.escreverTexto(caminhoToken(pessoal), "  \n")
+v.contem(erroAoCarregar(pessoal), "token vazio", "token vazio")
+removerToken(pessoal)
+v.verificar(nao arquivos.existe(caminhoToken(pessoal)), "token removido")
+removerToken(pessoal)
+v.verificar(verdadeiro, "remover sem token não falha")
+
+// Query
+v.igual(parametroDaQuery("/retorno?token=abc.def&x=1", "token"), "abc.def", "parâmetro da query")
+v.igual(parametroDaQuery("/retorno?x=1&token=a%2Bb%20c", "token"), "a+b c", "parâmetro decodificado")
+v.igual(parametroDaQuery("/retorno", "token"), "", "sem query")
+v.igual(parametroDaQuery("/retorno?tokenx=1", "token"), "", "nome parecido não conta")
+
+// Envia `requisicao` ao retorno, espera o token e devolve "token|resposta" ou "erro: ...".
+funcao simularRetorno(requisicoes: texto[], limiteMs: inteiro): texto {
+    var rede = importar("rede")
+    var retorno = RetornoAutenticacao()
+    var clientes: texto[] = []
+    para cada requisicao em requisicoes {
+        var cliente = rede.conectar("127.0.0.1", retorno.porta, 5000)
+        rede.escrever(cliente, requisicao)
+        clientes.adicionar(cliente)
+    }
+    var resultado = ""
+    tente {
+        resultado = retorno.aguardarToken(limiteMs)
+    } pegue (erro: ErroAutenticacao) {
+        resultado = "erro: " + erro.mensagem
+    }
+    var respostas: texto[] = []
+    para cada cliente em clientes {
+        var resposta: texto = rede.ler(cliente, 65536, 5000)
+        var primeiraLinha: texto[] = resposta.dividir("\r\n")
+        respostas.adicionar(primeiraLinha[0])
+        rede.fechar(cliente)
+    }
+    retorno.fechar()
+    retorna resultado + "|" + respostas.juntar(",")
+}
+
+v.verificar(RetornoAutenticacao().urlRetorno().comecaCom("http://127.0.0.1:"), "URL de retorno local")
+v.igual(simularRetorno(["GET /retorno?token=jwt-123 HTTP/1.1\r\nHost: x\r\n\r\n"], 5000), "jwt-123|HTTP/1.1 200 OK", "token recebido")
+v.igual(simularRetorno(["GET /favicon.ico HTTP/1.1\r\n\r\n", "GET /retorno?token=t2 HTTP/1.1\r\n\r\n"], 5000), "t2|HTTP/1.1 404 Not Found,HTTP/1.1 200 OK", "outras requisições não encerram a espera")
+v.igual(simularRetorno(["GET /retorno HTTP/1.1\r\n\r\n"], 5000), "erro: token não recebido no retorno|HTTP/1.1 400 Bad Request", "retorno sem token")
+var semRequisicao: texto[] = []
+v.igual(simularRetorno(semRequisicao, 300), "erro: tempo limite de autenticação excedido|", "tempo limite")
+
+arquivos.remover(pessoal)
+v.finalizar()

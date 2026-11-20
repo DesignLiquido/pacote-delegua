@@ -1,0 +1,578 @@
+// Comandos da linha de comando: instalar, buscar, info, autenticar, publicar, sincronizar e
+// publicar-versao.
+//
+// Porte de interno/comandos do pacote-go, que usa a biblioteca cobra. Aqui as opções são
+// analisadas por Cli.executar(), que recebe os argumentos e devolve o código de saída. A
+// URL da API, o diretório do projeto e o diretório pessoal são campos, para que os testes
+// rodem a linha de comando no mesmo processo.
+
+importar { PacoteRegistro, VersaoRegistro, PacotecaJsonc, lerPacotecaJsonc } de "./modelos"
+importar { ErroJsonc } de "./jsonc"
+importar { ClienteRegistro } de "./registro"
+importar { fonteDoRegistro } de "./resolvedor"
+importar { Instalador, OpcoesInstalacao, nomeManifesto } de "./instalador"
+importar { salvarToken, carregarToken, RetornoAutenticacao, abrirNavegador } de "./autenticacao"
+
+classe ErroCli herda Excecao {
+    construtor(mensagem: texto) {
+        super.construtor(mensagem)
+    }
+}
+
+funcao urlApiPadrao(): texto {
+    retorna "https://pacoteca-api.herokuapp.com"
+}
+
+// Quantidade de caracteres (não de bytes) de um texto UTF-8: os bytes de continuação
+// (0x80 a 0xBF) aparecem como %8X a %BX na codificação de URL.
+funcao larguraTexto(valor: texto): inteiro {
+    var rede = importar("rede")
+    var codificado: texto = rede.codificarComponenteUrl(valor)
+    var continuacoes = 0
+    var i = 0
+    enquanto i < codificado.tamanho() {
+        var caractere: texto = codificado[i]
+        se caractere == "%" e i + 1 < codificado.tamanho() {
+            var digito: texto = codificado[i + 1]
+            se "89AB".inclui(digito) {
+                continuacoes = continuacoes + 1
+            }
+            i = i + 3
+        } senao {
+            i = i + 1
+        }
+    }
+    var largura: inteiro = valor.tamanho() - continuacoes
+    retorna largura
+}
+
+// Completa `valor` com espaços à direita até `largura` caracteres (como %-20s no Go).
+funcao preencher(valor: texto, largura: inteiro): texto {
+    var resultado = valor
+    var atual: inteiro = larguraTexto(valor)
+    enquanto atual < largura {
+        resultado = resultado + " "
+        atual = atual + 1
+    }
+    retorna resultado
+}
+
+funcao repetir(valor: texto, vezes: inteiro): texto {
+    var resultado = ""
+    para (var i = 0; i < vezes; i = i + 1) {
+        resultado = resultado + valor
+    }
+    retorna resultado
+}
+
+// Equivale a ^v?[0-9][0-9A-Za-z.+-]{0,127}$, a validação de tags da pacoteca-api.
+funcao ehTagValida(tag: texto): lógico {
+    var resto = tag
+    se resto.comecaCom("v") {
+        resto = resto.subtexto(1, resto.tamanho())
+    }
+    se resto.tamanho() == 0 ou resto.tamanho() > 128 {
+        retorna falso
+    }
+    var primeiro: texto = resto[0]
+    se nao "0123456789".inclui(primeiro) {
+        retorna falso
+    }
+    var permitidos = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz.+-"
+    para (var i = 1; i < resto.tamanho(); i = i + 1) {
+        var caractere: texto = resto[i]
+        se nao permitidos.inclui(caractere) {
+            retorna falso
+        }
+    }
+    retorna verdadeiro
+}
+
+// Argumentos de um comando: posicionais e opções (--nome valor, --nome=valor, -n valor).
+classe ArgumentosComando {
+    comando: texto
+    posicionais: texto[]
+    // nome longo da opção → valor ("verdadeiro" para opções sem valor)
+    opcoes: dicionário
+    pedeAjuda: lógico
+
+    construtor(comando: texto) {
+        isto.comando = comando
+        isto.posicionais = []
+        isto.opcoes = {}
+        isto.pedeAjuda = falso
+    }
+
+    tem(nome: texto): lógico {
+        retorna isto.opcoes.contem(nome)
+    }
+
+    valor(nome: texto): texto {
+        se nao isto.opcoes.contem(nome) {
+            retorna ""
+        }
+        var valor: texto = isto.opcoes[nome]
+        retorna valor
+    }
+}
+
+// Opções aceitas por um comando: "nome:curto:valor" (valor: "s" se recebe valor, "n" se é
+// apenas um indicador).
+funcao opcoesDoComando(comando: texto): texto[] {
+    se comando == "instalar" {
+        retorna ["realizacao:r:s", "congelado::n"]
+    }
+    se comando == "buscar" {
+        retorna ["realizacao:r:s"]
+    }
+    se comando == "autenticar" {
+        retorna ["token::s"]
+    }
+    se comando == "publicar-versao" {
+        retorna ["pacote:p:s"]
+    }
+    var nenhuma: texto[] = []
+    retorna nenhuma
+}
+
+// Especificação da opção `nome` (longo, ou curto se `curta`) do comando; "" se não existe.
+funcao especificacaoOpcao(comando: texto, nome: texto, curta: lógico): texto {
+    var especificacoes: texto[] = opcoesDoComando(comando)
+    para cada especificacao em especificacoes {
+        var partes: texto[] = especificacao.dividir(":")
+        var longo: texto = partes[0]
+        var curto: texto = partes[1]
+        se (curta e curto != "" e curto == nome) ou (nao curta e longo == nome) {
+            retorna especificacao
+        }
+    }
+    retorna ""
+}
+
+funcao analisarArgumentos(comando: texto, argumentos: texto[]): ArgumentosComando {
+    var resultado = ArgumentosComando(comando)
+    var i = 0
+    enquanto i < argumentos.tamanho() {
+        var argumento: texto = argumentos[i]
+        i = i + 1
+        se argumento == "--help" ou argumento == "-h" {
+            resultado.pedeAjuda = verdadeiro
+        } senao {
+            se argumento == "--" {
+                enquanto i < argumentos.tamanho() {
+                    var restante: texto = argumentos[i]
+                    resultado.posicionais.adicionar(restante)
+                    i = i + 1
+                }
+            } senao {
+                se argumento.comecaCom("-") e argumento.tamanho() > 1 {
+                    var curta: lógico = nao argumento.comecaCom("--")
+                    var nome = ""
+                    se curta {
+                        nome = argumento.subtexto(1, argumento.tamanho())
+                    } senao {
+                        nome = argumento.subtexto(2, argumento.tamanho())
+                    }
+                    var valorEmbutido = ""
+                    var temValorEmbutido = falso
+                    var posicaoIgual: inteiro = nome.encontrar("=")
+                    se posicaoIgual >= 0 {
+                        valorEmbutido = nome.subtexto(posicaoIgual + 1, nome.tamanho())
+                        nome = nome.subtexto(0, posicaoIgual)
+                        temValorEmbutido = verdadeiro
+                    }
+                    var especificacao = especificacaoOpcao(comando, nome, curta)
+                    se especificacao == "" {
+                        falhar ErroCli("opção desconhecida: " + argumento)
+                    }
+                    var partes: texto[] = especificacao.dividir(":")
+                    var longo: texto = partes[0]
+                    var tipoValor: texto = partes[2]
+                    se tipoValor == "s" {
+                        se temValorEmbutido {
+                            resultado.opcoes[longo] = valorEmbutido
+                        } senao {
+                            se i >= argumentos.tamanho() {
+                                falhar ErroCli("a opção " + argumento + " precisa de um valor")
+                            }
+                            var valor: texto = argumentos[i]
+                            resultado.opcoes[longo] = valor
+                            i = i + 1
+                        }
+                    } senao {
+                        se temValorEmbutido {
+                            falhar ErroCli("a opção " + argumento + " não recebe valor")
+                        }
+                        resultado.opcoes[longo] = "verdadeiro"
+                    }
+                } senao {
+                    resultado.posicionais.adicionar(argumento)
+                }
+            }
+        }
+    }
+    retorna resultado
+}
+
+funcao ajudaGeral(): texto {
+    retorna "pacote é o cliente oficial do registro de pacotes Delégua.\n\nPermite instalar, buscar, publicar e gerenciar pacotes para todas as\nrealizações da linguagem: node, llvm e cgd.\n\nUso:\n  pacote <comando> [argumentos] [opções]\n\nComandos:\n  instalar         Instala pacotes Delégua\n  buscar           Busca pacotes no registro\n  info             Exibe informações detalhadas de um pacote\n  autenticar       Autentica com o GitHub para operações de publicação\n  publicar         Registra um repositório GitHub como pacote Delégua\n  sincronizar      Re-busca o pacoteca.jsonc e atualiza os metadados no registro\n  publicar-versao  Publica uma versão do pacote a partir de uma tag do repositório\n\nUse \"pacote <comando> --help\" para mais informações sobre um comando."
+}
+
+funcao ajudaComando(comando: texto): texto {
+    se comando == "instalar" {
+        retorna "Instala pacotes Delégua a partir do registro.\n\nSem argumentos, instala as dependências declaradas no pacoteca.jsonc local e as\ndependências delas. Com o nome de um pacote, instala aquele pacote (e as dependências\ndele), opcionalmente com uma restrição de versão.\n\nAs versões escolhidas, com o commit exato de cada uma, ficam no pacoteca.lock.\nInstalações seguintes reutilizam essas versões enquanto elas atenderem ao pacoteca.jsonc.\nVersione o pacoteca.lock junto com o projeto.\n\nRestrições aceitas: 1.2.3, ^1.2.0, ~1.2.0, >=1.0.0 <2.0.0, 1.x, *, ^1.0.0 || ^2.0.0\n\nUso:\n  pacote instalar [nome[@restricao]] [opções]\n\nOpções:\n  -r, --realizacao <nome>  realização alvo: node, llvm ou cgd (padrão: todas suportadas por cada pacote)\n      --congelado          falha se o pacoteca.lock precisar mudar, em vez de atualizá-lo\n\nExemplos:\n  pacote instalar\n  pacote instalar matematica\n  pacote instalar matematica@^1.2.0\n  pacote instalar matematica --realizacao llvm\n  pacote instalar --congelado          # em CI: falha se o pacoteca.lock precisar mudar"
+    }
+    se comando == "buscar" {
+        retorna "Lista pacotes disponíveis no registro pacoteca.\n\nSem argumentos, lista todos os pacotes. Com --realizacao, filtra por realização.\n\nUso:\n  pacote buscar [opções]\n\nOpções:\n  -r, --realizacao <nome>  filtrar por realização: node, llvm ou cgd\n\nExemplos:\n  pacote buscar\n  pacote buscar --realizacao node\n  pacote buscar --realizacao llvm"
+    }
+    se comando == "info" {
+        retorna "Exibe informações detalhadas de um pacote.\n\nUso:\n  pacote info <nome>"
+    }
+    se comando == "autenticar" {
+        retorna "Abre o navegador para autenticação via GitHub OAuth.\n\nApós autenticar, o token é salvo em ~/.delegua/token e usado automaticamente\nnos comandos que exigem autenticação (publicar, sincronizar).\n\nPara fornecer um token diretamente:\n  pacote autenticar --token <jwt>"
+    }
+    se comando == "publicar" {
+        retorna "Lê o pacoteca.jsonc do repositório informado e o registra no pacoteca.\n\nO repositório deve conter um arquivo pacoteca.jsonc na raiz.\nVocê precisa ter permissão de escrita (push) no repositório.\n\nUso:\n  pacote publicar <url-repositorio>\n\nExemplo:\n  pacote publicar https://github.com/minha-org/meu-pacote"
+    }
+    se comando == "sincronizar" {
+        retorna "Re-busca o pacoteca.jsonc e atualiza os metadados no registro.\n\nUso:\n  pacote sincronizar <nome>"
+    }
+    retorna "Publica uma versão instalável de um pacote já registrado (pacote publicar).\n\nA tag precisa existir no repositório GitHub do pacote (envie-a com git push --tags).\nO registro lê o pacoteca.jsonc no commit da tag, que deve declarar a versão\ncorrespondente: a tag v1.2.0 (ou 1.2.0) publica a versão \"1.2.0\". A versão fica\nfixada a esse commit e passa por análise de segurança.\n\nVersões publicadas são imutáveis: para corrigir algo, publique uma nova versão.\n\nO nome do pacote é lido do pacoteca.jsonc do diretório atual, ou informado com --pacote.\n\nUso:\n  pacote publicar-versao <tag> [opções]\n\nOpções:\n  -p, --pacote <nome>  nome do pacote (padrão: campo 'nome' do pacoteca.jsonc local)\n\nExemplos:\n  git tag v1.2.0 && git push origin v1.2.0\n  pacote publicar-versao v1.2.0\n  pacote publicar-versao v1.2.0 --pacote matematica"
+}
+
+funcao ehComando(nome: texto): lógico {
+    var comandos: texto[] = ["instalar", "buscar", "info", "autenticar", "publicar", "sincronizar", "publicar-versao"]
+    para cada comando em comandos {
+        se comando == nome {
+            retorna verdadeiro
+        }
+    }
+    retorna falso
+}
+
+funcao formatarRealizacoes(realizacoes: texto[]): texto {
+    retorna realizacoes.juntar(",")
+}
+
+classe Cli {
+    // URL base da pacoteca-api (variável PACOTECA_URL, ou urlApiPadrao()).
+    urlApi: texto
+    // Raiz do projeto ("" para o diretório atual).
+    diretorio: texto
+    // Diretório pessoal, onde fica ~/.delegua/token.
+    pessoal: texto
+    // Repassa --quiet ao git.
+    gitSilencioso: lógico
+    // Tempo máximo de espera pelo retorno do login, em milissegundos.
+    limiteAutenticacaoMs: inteiro
+
+    // Toda a saída padrão e de erro; `imprimir` também a escreve no terminal.
+    textoSaida: texto
+    textoErros: texto
+    imprimir: lógico
+
+    construtor(urlApi: texto, diretorio: texto, pessoal: texto) {
+        isto.urlApi = urlApi
+        isto.diretorio = diretorio
+        isto.pessoal = pessoal
+        isto.gitSilencioso = falso
+        isto.limiteAutenticacaoMs = 120000
+        isto.textoSaida = ""
+        isto.textoErros = ""
+        isto.imprimir = verdadeiro
+    }
+
+    saida(linha: texto) {
+        isto.textoSaida = isto.textoSaida + linha + "\n"
+        se isto.imprimir {
+            escreva(linha)
+        }
+    }
+
+    erro(linha: texto) {
+        var processo = importar("processo")
+        isto.textoErros = isto.textoErros + linha + "\n"
+        se isto.imprimir {
+            processo.escreverErro(linha)
+        }
+    }
+
+    clienteRegistro(comToken: lógico): ClienteRegistro {
+        var token = ""
+        se comToken {
+            token = carregarToken(isto.pessoal)
+        }
+        retorna ClienteRegistro(isto.urlApi, token)
+    }
+
+    // Executa a linha de comando e devolve o código de saída (0 em sucesso).
+    executar(argumentos: texto[]): inteiro {
+        se argumentos.tamanho() == 0 {
+            isto.saida(ajudaGeral())
+            retorna 0
+        }
+        var comando: texto = argumentos[0]
+        se comando == "--help" ou comando == "-h" ou comando == "ajuda" ou comando == "help" {
+            isto.saida(ajudaGeral())
+            retorna 0
+        }
+        se nao ehComando(comando) {
+            isto.erro("Erro: comando desconhecido \"" + comando + "\" para \"pacote\"")
+            isto.erro("Use \"pacote --help\" para ver os comandos.")
+            retorna 1
+        }
+
+        var restantes: texto[] = []
+        para (var i = 1; i < argumentos.tamanho(); i = i + 1) {
+            var argumento: texto = argumentos[i]
+            restantes.adicionar(argumento)
+        }
+
+        tente {
+            var analisados = analisarArgumentos(comando, restantes)
+            se analisados.pedeAjuda {
+                isto.saida(ajudaComando(comando))
+                retorna 0
+            }
+            isto.executarComando(analisados)
+        } pegue (erro: Excecao) {
+            isto.erro("Erro: " + erro.mensagem)
+            retorna 1
+        }
+        retorna 0
+    }
+
+    exigirPosicionais(argumentos: ArgumentosComando, minimo: inteiro, maximo: inteiro) {
+        var quantidade: inteiro = argumentos.posicionais.tamanho()
+        se quantidade < minimo ou quantidade > maximo {
+            se minimo == maximo {
+                falhar ErroCli("\"pacote " + argumentos.comando + "\" espera " + texto(minimo) + " argumento(s), recebeu " + texto(quantidade))
+            }
+            falhar ErroCli("\"pacote " + argumentos.comando + "\" aceita no máximo " + texto(maximo) + " argumento(s), recebeu " + texto(quantidade))
+        }
+    }
+
+    executarComando(argumentos: ArgumentosComando) {
+        var comando = argumentos.comando
+        se comando == "instalar" {
+            isto.exigirPosicionais(argumentos, 0, 1)
+            isto.instalar(argumentos)
+            retorna
+        }
+        se comando == "buscar" {
+            isto.exigirPosicionais(argumentos, 0, 1)
+            isto.buscar(argumentos.valor("realizacao"))
+            retorna
+        }
+        se comando == "info" {
+            isto.exigirPosicionais(argumentos, 1, 1)
+            var nomeInfo: texto = argumentos.posicionais[0]
+            isto.info(nomeInfo)
+            retorna
+        }
+        se comando == "autenticar" {
+            isto.exigirPosicionais(argumentos, 0, 0)
+            isto.autenticar(argumentos.valor("token"))
+            retorna
+        }
+        se comando == "publicar" {
+            isto.exigirPosicionais(argumentos, 1, 1)
+            var url: texto = argumentos.posicionais[0]
+            isto.publicar(url)
+            retorna
+        }
+        se comando == "sincronizar" {
+            isto.exigirPosicionais(argumentos, 1, 1)
+            var nomeSincronizar: texto = argumentos.posicionais[0]
+            isto.sincronizar(nomeSincronizar)
+            retorna
+        }
+        isto.exigirPosicionais(argumentos, 1, 1)
+        var tag: texto = argumentos.posicionais[0]
+        isto.publicarVersao(tag, argumentos.valor("pacote"))
+    }
+
+    instalar(argumentos: ArgumentosComando) {
+        var opcoes = OpcoesInstalacao()
+        opcoes.realizacao = argumentos.valor("realizacao")
+        opcoes.congelado = argumentos.tem("congelado")
+        opcoes.diretorio = isto.diretorio
+
+        var instalador = Instalador(fonteDoRegistro(isto.clienteRegistro(falso)), opcoes)
+        instalador.git.silencioso = isto.gitSilencioso
+        instalador.imprimir = isto.imprimir
+        tente {
+            se argumentos.posicionais.tamanho() == 0 {
+                instalador.instalarDependencias()
+            } senao {
+                var especificacao: texto = argumentos.posicionais[0]
+                instalador.instalarPacote(especificacao)
+            }
+        } finalmente {
+            // A saída do instalador faz parte da saída do comando.
+            isto.textoSaida = isto.textoSaida + instalador.textoSaida
+        }
+    }
+
+    buscar(realizacao: texto) {
+        var cliente = isto.clienteRegistro(falso)
+        var pacotes: PacoteRegistro[] = cliente.listarPacotes(realizacao)
+        se pacotes.tamanho() == 0 {
+            isto.saida("Nenhum pacote encontrado.")
+            retorna
+        }
+        isto.saida(preencher("NOME", 20) + " " + preencher("REALIZAÇÕES", 12) + " DESCRIÇÃO")
+        isto.saida(repetir("-", 70))
+        para cada pacote em pacotes {
+            var realizacoes: texto[] = pacote.realizacoes
+            isto.saida(preencher(pacote.nome, 20) + " " + preencher(formatarRealizacoes(realizacoes), 12) + " " + pacote.descricao)
+        }
+    }
+
+    info(nome: texto) {
+        var cliente = isto.clienteRegistro(falso)
+        var pacote = PacoteRegistro("", "")
+        tente {
+            pacote = cliente.buscarPacote(nome)
+        } pegue (erro: Excecao) {
+            falhar ErroCli("pacote '" + nome + "' não encontrado")
+        }
+
+        var descricao = pacote.descricao
+        se descricao == "" {
+            descricao = "(sem descrição)"
+        }
+        var realizacoes: texto[] = pacote.realizacoes
+        isto.saida("Nome:          " + pacote.nome)
+        isto.saida("Descrição:     " + descricao)
+        isto.saida("Repositório:   " + pacote.urlRepositorio)
+        isto.saida("Realizações:   " + formatarRealizacoes(realizacoes))
+        se pacote.nivelVerificacao != "" {
+            isto.saida("Verificação:   " + pacote.nivelVerificacao)
+        }
+        se pacote.pacoteNpm != "" {
+            isto.saida("Pacote NPM:    " + pacote.pacoteNpm)
+        }
+
+        var versoes: VersaoRegistro[] = []
+        tente {
+            versoes = cliente.listarVersoes(nome)
+        } pegue (erro: Excecao) {
+            retorna
+        }
+        se versoes.tamanho() == 0 {
+            retorna
+        }
+        isto.saida("")
+        isto.saida("Versões:")
+        para cada versao em versoes {
+            se nao versao.publicada() {
+                isto.saida("  " + versao.versao + " (não publicada: sem tag)")
+            } senao {
+                var hash = versao.hashCommit
+                se hash.tamanho() > 12 {
+                    hash = hash.subtexto(0, 12)
+                }
+                isto.saida("  " + versao.versao + " (tag: " + versao.tagGitHub + ", commit: " + hash + ", verificação: " + versao.nivelVerificacao + ")")
+            }
+        }
+    }
+
+    autenticar(token: texto) {
+        var rede = importar("rede")
+        se token != "" {
+            salvarToken(isto.pessoal, token)
+            isto.saida("Token salvo com sucesso.")
+            retorna
+        }
+
+        var retorno = RetornoAutenticacao()
+        var urlAutenticacao = isto.urlApi + "/autenticar/github?retorno_local=" + rede.codificarComponenteUrl(retorno.urlRetorno())
+        isto.saida("Abrindo o navegador para autenticação...")
+        isto.saida("Se o navegador não abrir, acesse:")
+        isto.saida("  " + urlAutenticacao)
+        isto.saida("")
+        abrirNavegador(urlAutenticacao)
+
+        var recebido = ""
+        tente {
+            recebido = retorno.aguardarToken(isto.limiteAutenticacaoMs)
+        } finalmente {
+            retorno.fechar()
+        }
+        salvarToken(isto.pessoal, recebido)
+        isto.saida("Autenticado com sucesso!")
+    }
+
+    publicar(urlRepositorio: texto) {
+        var cliente = isto.clienteRegistro(verdadeiro)
+        isto.saida("Publicando " + urlRepositorio + "...")
+        var pacote = cliente.publicarPacote(urlRepositorio)
+        var realizacoes: texto[] = pacote.realizacoes
+        isto.saida("Pacote '" + pacote.nome + "' registrado com sucesso!")
+        isto.saida("  Realizações: " + formatarRealizacoes(realizacoes))
+        isto.saida("  Repositório: " + pacote.urlRepositorio)
+    }
+
+    sincronizar(nome: texto) {
+        var cliente = isto.clienteRegistro(verdadeiro)
+        isto.saida("Sincronizando " + nome + "...")
+        var pacote = cliente.sincronizarPacote(nome)
+        isto.saida("Pacote '" + pacote.nome + "' sincronizado.")
+    }
+
+    // O pacoteca.jsonc do diretório do projeto, para publicar-versao.
+    lerManifestoLocal(): PacotecaJsonc {
+        var arquivos = importar("arquivos")
+        var caminho = nomeManifesto()
+        se isto.diretorio != "" {
+            caminho = arquivos.juntarCaminhos(isto.diretorio, nomeManifesto())
+        }
+        se nao arquivos.existe(caminho) {
+            falhar ErroCli(nomeManifesto() + " não encontrado no diretório atual; informe o pacote com --pacote")
+        }
+        var conteudo = arquivos.lerTexto(caminho)
+        se conteudo == nulo {
+            falhar ErroCli("erro ao ler " + nomeManifesto())
+        }
+        var manifesto = PacotecaJsonc()
+        tente {
+            manifesto = lerPacotecaJsonc(conteudo)
+        } pegue (erro: ErroJsonc) {
+            falhar ErroCli("erro ao analisar " + nomeManifesto() + ": " + erro.mensagem)
+        }
+        se manifesto.nome.aparar() == "" {
+            falhar ErroCli("o campo 'nome' do " + nomeManifesto() + " está vazio; informe o pacote com --pacote")
+        }
+        retorna manifesto
+    }
+
+    publicarVersao(tagInformada: texto, pacoteInformado: texto) {
+        var tag = tagInformada.aparar()
+        se nao ehTagValida(tag) {
+            falhar ErroCli("tag inválida: \"" + tag + "\" (use o formato 1.2.0 ou v1.2.0)")
+        }
+
+        var nome = pacoteInformado
+        se nome == "" {
+            var manifesto = isto.lerManifestoLocal()
+            nome = manifesto.nome
+            se manifesto.versao != "" e tag != manifesto.versao e tag != "v" + manifesto.versao {
+                isto.erro("aviso: o " + nomeManifesto() + " local declara a versão " + manifesto.versao + "; o registro usará o " + nomeManifesto() + " do commit da tag " + tag + ".")
+            }
+        }
+
+        var cliente = isto.clienteRegistro(verdadeiro)
+        isto.saida("Publicando " + nome + " a partir da tag " + tag + "...")
+        var versao = cliente.publicarVersao(nome, tag)
+        var realizacoes: texto[] = versao.realizacoes
+        isto.saida("Versão " + versao.versao + " de '" + nome + "' publicada.")
+        isto.saida("  Commit:      " + versao.hashCommit)
+        isto.saida("  Realizações: " + formatarRealizacoes(realizacoes))
+        isto.saida("  Verificação: " + versao.nivelVerificacao)
+        se versao.nivelVerificacao == "em_analise" {
+            isto.saida("")
+            isto.saida("A análise de segurança está em andamento. Acompanhe com: pacote info " + nome)
+        }
+    }
+}

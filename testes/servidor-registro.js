@@ -5,23 +5,32 @@
 // Rotas, como na pacoteca-api: GET /pacotes[?realizacao=], GET /pacotes/{nome},
 // GET /pacotes/{nome}/versoes, POST /pacotes, POST /pacotes/{nome}/versoes e
 // POST /pacotes/{nome}/sincronizar. Erros vêm como {"erro": "..."}; os POST exigem
-// "Authorization: Bearer token-teste". GET /ultima devolve a última requisição recebida.
+// "Authorization: Bearer token-teste". GET /ultima devolve a última requisição recebida, e
+// POST /__teste/registrar ({ pacote, versoes }) registra um pacote durante os testes e
+// POST /__teste/reiniciar volta aos dados iniciais.
 const fs = require('fs');
 const http = require('http');
 
-const pacotes = {
-    mat: { id: 'p1', nome: 'mat', descricao: 'Matemática', urlRepositorio: 'https://github.com/org/mat', realizacoes: ['node', 'llvm'], nivelVerificacao: 'verificado', pacoteNpm: null, pontoDeEntrada: null },
-    'a b': { id: 'p2', nome: 'a b', descricao: null, urlRepositorio: 'https://github.com/org/ab', realizacoes: ['node'], nivelVerificacao: 'nao_verificado' },
-};
-const versoes = {
-    mat: [
-        { id: 'v1', pacoteId: 'p1', versao: '1.0.0', tagGitHub: 'v1.0.0', hashCommit: 'hash-1.0.0', realizacoes: ['node'], dependencias: {}, nivelVerificacao: 'verificado' },
-        { id: 'v2', pacoteId: 'p1', versao: '1.1.0', tagGitHub: 'v1.1.0', hashCommit: 'hash-1.1.0', realizacoes: ['node'], dependencias: { fisica: '^0.5' }, nivelVerificacao: 'verificado' },
-        { id: 'v3', pacoteId: 'p1', versao: '2.0.0', tagGitHub: null, hashCommit: null, realizacoes: ['node'], dependencias: {}, nivelVerificacao: 'em_analise' },
-    ],
-    fisica: [{ id: 'v4', pacoteId: 'p3', versao: '0.5.2', tagGitHub: 'v0.5.2', hashCommit: 'hash-0.5.2', realizacoes: ['node'], dependencias: {}, nivelVerificacao: 'verificado' }],
-};
-pacotes.fisica = { id: 'p3', nome: 'fisica', urlRepositorio: 'https://github.com/org/fisica', realizacoes: ['node'], nivelVerificacao: 'verificado' };
+let pacotes;
+let versoes;
+
+// Dados iniciais (restaurados por POST /__teste/reiniciar).
+function reiniciar() {
+    pacotes = {
+        mat: { id: 'p1', nome: 'mat', descricao: 'Matemática', urlRepositorio: 'https://github.com/org/mat', realizacoes: ['node', 'llvm'], nivelVerificacao: 'verificado', pacoteNpm: null, pontoDeEntrada: null },
+        'a b': { id: 'p2', nome: 'a b', descricao: null, urlRepositorio: 'https://github.com/org/ab', realizacoes: ['node'], nivelVerificacao: 'nao_verificado' },
+    };
+    versoes = {
+        mat: [
+            { id: 'v1', pacoteId: 'p1', versao: '1.0.0', tagGitHub: 'v1.0.0', hashCommit: 'hash-1.0.0', realizacoes: ['node'], dependencias: {}, nivelVerificacao: 'verificado' },
+            { id: 'v2', pacoteId: 'p1', versao: '1.1.0', tagGitHub: 'v1.1.0', hashCommit: 'hash-1.1.0', realizacoes: ['node'], dependencias: { fisica: '^0.5' }, nivelVerificacao: 'verificado' },
+            { id: 'v3', pacoteId: 'p1', versao: '2.0.0', tagGitHub: null, hashCommit: null, realizacoes: ['node'], dependencias: {}, nivelVerificacao: 'em_analise' },
+        ],
+        fisica: [{ id: 'v4', pacoteId: 'p3', versao: '0.5.2', tagGitHub: 'v0.5.2', hashCommit: 'hash-0.5.2', realizacoes: ['node'], dependencias: {}, nivelVerificacao: 'verificado' }],
+    };
+    pacotes.fisica = { id: 'p3', nome: 'fisica', urlRepositorio: 'https://github.com/org/fisica', realizacoes: ['node'], nivelVerificacao: 'verificado' };
+}
+reiniciar();
 
 let ultima = null;
 
@@ -36,6 +45,18 @@ const servidor = http.createServer((req, res) => {
     req.on('end', () => {
         const url = new URL(req.url, 'http://local');
         if (url.pathname === '/ultima') return responder(res, 200, ultima);
+        if (req.method === 'POST' && url.pathname === '/__teste/reiniciar') {
+            reiniciar();
+            ultima = null;
+            return responder(res, 200, { ok: true });
+        }
+        // Só para testes: registra (ou substitui) um pacote e suas versões.
+        if (req.method === 'POST' && url.pathname === '/__teste/registrar') {
+            const { pacote, versoes: lista } = JSON.parse(corpo);
+            pacotes[pacote.nome] = pacote;
+            versoes[pacote.nome] = lista;
+            return responder(res, 200, { ok: true });
+        }
         ultima = { metodo: req.method, url: req.url, autorizacao: req.headers['authorization'] || '', tipo: req.headers['content-type'] || '', corpo };
 
         const partes = url.pathname.split('/').filter((p) => p !== '').map(decodeURIComponent);

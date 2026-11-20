@@ -1,0 +1,173 @@
+// Token de autenticação da pacoteca-api, salvo em ~/.delegua/token, e o retorno local do
+// login pelo GitHub (OAuth).
+//
+// Porte de interno/autenticacao/token.go e da parte de servidor local de
+// interno/comandos/autenticar.go do pacote-go. As funções recebem o diretório pessoal
+// (`pessoal`) para que os testes usem um diretório temporário.
+
+classe ErroAutenticacao herda Excecao {
+    construtor(mensagem: texto) {
+        super.construtor(mensagem)
+    }
+}
+
+funcao diretorioConfig(pessoal: texto): texto {
+    var arquivos = importar("arquivos")
+    var diretorio: texto = arquivos.juntarCaminhos(pessoal, ".delegua")
+    retorna diretorio
+}
+
+funcao caminhoToken(pessoal: texto): texto {
+    var arquivos = importar("arquivos")
+    var caminho: texto = arquivos.juntarCaminhos(diretorioConfig(pessoal), "token")
+    retorna caminho
+}
+
+// Grava o token (sem espaços nas pontas), acessível só pelo usuário.
+funcao salvarToken(pessoal: texto, token: texto) {
+    var arquivos = importar("arquivos")
+    var diretorio = diretorioConfig(pessoal)
+    se nao arquivos.criarDiretorio(diretorio) {
+        falhar ErroAutenticacao("erro ao criar diretório de configuração: " + diretorio)
+    }
+    arquivos.definirPermissoes(diretorio, 448)
+    var caminho = caminhoToken(pessoal)
+    se nao arquivos.escreverTexto(caminho, token.aparar()) {
+        falhar ErroAutenticacao("erro ao gravar " + caminho)
+    }
+    // 0600
+    arquivos.definirPermissoes(caminho, 384)
+}
+
+// Lê o token salvo; falha se não houver.
+funcao carregarToken(pessoal: texto): texto {
+    var arquivos = importar("arquivos")
+    var caminho = caminhoToken(pessoal)
+    se nao arquivos.existe(caminho) {
+        falhar ErroAutenticacao("não autenticado — execute: pacote autenticar")
+    }
+    var conteudo = arquivos.lerTexto(caminho)
+    se conteudo == nulo {
+        falhar ErroAutenticacao("erro ao ler token: " + caminho)
+    }
+    var token: texto = conteudo.aparar()
+    se token == "" {
+        falhar ErroAutenticacao("token vazio — execute: pacote autenticar")
+    }
+    retorna token
+}
+
+// Apaga o token salvo (logout).
+funcao removerToken(pessoal: texto) {
+    var arquivos = importar("arquivos")
+    arquivos.remover(caminhoToken(pessoal))
+}
+
+// Valor de um parâmetro da query de um caminho ("/retorno?token=abc&x=1"), decodificado;
+// "" se ausente.
+funcao parametroDaQuery(caminho: texto, nome: texto): texto {
+    var rede = importar("rede")
+    var posicao: inteiro = caminho.encontrar("?")
+    se posicao < 0 {
+        retorna ""
+    }
+    var query: texto = caminho.subtexto(posicao + 1, caminho.tamanho())
+    var pares: texto[] = query.dividir("&")
+    para cada par em pares {
+        var igual: inteiro = par.encontrar("=")
+        se igual > 0 {
+            var chave: texto = par.subtexto(0, igual)
+            se chave == nome {
+                var valor: texto = par.subtexto(igual + 1, par.tamanho())
+                var decodificado: texto = rede.decodificarComponenteUrl(valor.substituir("+", " "))
+                retorna decodificado
+            }
+        }
+    }
+    retorna ""
+}
+
+// Servidor local que recebe o retorno do login: a API redireciona o navegador para
+// http://127.0.0.1:<porta>/retorno?token=<jwt>.
+classe RetornoAutenticacao {
+    servidor: texto
+    porta: inteiro
+
+    construtor() {
+        var rede = importar("rede")
+        isto.servidor = rede.escutar("127.0.0.1", 0)
+        se isto.servidor == nulo {
+            falhar ErroAutenticacao("não foi possível iniciar servidor local: " + rede.ultimoErro())
+        }
+        isto.porta = rede.portaLocal(isto.servidor)
+    }
+
+    urlRetorno(): texto {
+        retorna "http://127.0.0.1:" + texto(isto.porta) + "/retorno"
+    }
+
+    // Espera uma requisição em /retorno por até `limiteMs` e devolve o token dela.
+    aguardarToken(limiteMs: inteiro): texto {
+        var rede = importar("rede")
+        var tempo = importar("tempo")
+        var limite: inteiro = tempo.monotonicoMilissegundos() + limiteMs
+        enquanto verdadeiro {
+            var restante: inteiro = limite - tempo.monotonicoMilissegundos()
+            se restante <= 0 {
+                falhar ErroAutenticacao("tempo limite de autenticação excedido")
+            }
+            var conexao = rede.aceitar(isto.servidor, restante)
+            se conexao == nulo {
+                falhar ErroAutenticacao("tempo limite de autenticação excedido")
+            }
+            // Linha da requisição: "GET /retorno?token=... HTTP/1.1".
+            var cabecalho: texto = rede.lerAte(conexao, "\r\n\r\n", 65536, 10000)
+            var linhas: texto[] = cabecalho.dividir("\r\n")
+            var primeira: texto = linhas[0]
+            var partes: texto[] = primeira.dividir(" ")
+            var caminho = ""
+            se partes.tamanho() >= 2 {
+                caminho = partes[1]
+            }
+
+            se caminho == "/retorno" ou caminho.comecaCom("/retorno?") {
+                var token = parametroDaQuery(caminho, "token")
+                se token == "" {
+                    isto.responder(conexao, "400 Bad Request", "Token não recebido.")
+                    falhar ErroAutenticacao("token não recebido no retorno")
+                }
+                isto.responder(conexao, "200 OK", "<html><body><h2>Autenticado! Pode fechar esta aba.</h2></body></html>")
+                retorna token
+            }
+            // Outras requisições do navegador (ex.: /favicon.ico) não encerram a espera.
+            isto.responder(conexao, "404 Not Found", "")
+        }
+        retorna ""
+    }
+
+    responder(conexao: texto, situacao: texto, corpo: texto) {
+        var rede = importar("rede")
+        rede.escrever(conexao, "HTTP/1.1 " + situacao + "\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: " + texto(corpo.tamanho()) + "\r\nConnection: close\r\n\r\n" + corpo)
+        rede.fechar(conexao)
+    }
+
+    fechar() {
+        var rede = importar("rede")
+        rede.fechar(isto.servidor)
+    }
+}
+
+// Abre a URL no navegador padrão (sem esperar).
+funcao abrirNavegador(url: texto) {
+    var processo = importar("processo")
+    var sistema: texto = processo.sistemaOperacional()
+    se sistema == "windows" {
+        processo.executar("rundll32", ["url.dll,FileProtocolHandler", url], "")
+    } senao {
+        se sistema == "darwin" {
+            processo.executar("open", [url], "")
+        } senao {
+            processo.executar("xdg-open", [url], "")
+        }
+    }
+}

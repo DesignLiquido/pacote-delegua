@@ -17,6 +17,8 @@ se porta == nulo ou porta == "" {
     processo.sair(1)
 }
 var url = "http://127.0.0.1:" + porta
+// A pacoteca-api falsa é compartilhada entre os arquivos de teste: começa dos dados iniciais.
+http.requisicaoPost(http.novoClienteHttp(url, 5000), "/__teste/reiniciar", "")
 
 // A última requisição que o servidor recebeu, como texto JSON.
 funcao ultimaRequisicao(url: texto): texto {

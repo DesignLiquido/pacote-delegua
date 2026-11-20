@@ -1,0 +1,24 @@
+// Ponto de entrada do programa `pacote`: lê os argumentos e a variável PACOTECA_URL e
+// executa a linha de comando (fontes/cli.delegua).
+//
+// Compilação: ilc fontes/pacote.delegua -o pacote
+importar { Cli, urlApiPadrao } de "./cli"
+
+var argumentos = importar("argumentos")
+var arquivos = importar("arquivos")
+var processo = importar("processo")
+
+var url = processo.variavelAmbiente("PACOTECA_URL")
+se url == nulo ou url == "" {
+    url = urlApiPadrao()
+}
+
+var lista: texto[] = []
+var total: inteiro = argumentos.quantidadeArgumentos()
+para (var i = 0; i < total; i = i + 1) {
+    var argumento: texto = argumentos.argumento(i)
+    lista.adicionar(argumento)
+}
+
+var cli = Cli(url, "", arquivos.diretorioPessoal())
+processo.sair(cli.executar(lista))

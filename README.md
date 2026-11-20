@@ -17,8 +17,19 @@ Portado até agora, dos pacotes `interno/*` do pacote-go, com os testes em Go co
 | `fontes/git.delegua` | `interno/git/repositorio.go` | Instalação a partir do repositório git, fixada em um commit |
 | `fontes/registro.delegua` | `interno/registro/cliente.go` | Cliente HTTP da pacoteca-api; o resolvedor pode usá-lo como fonte (`fonteDoRegistro`) |
 | `fontes/instalador.delegua` | `interno/instalador/` | Resolução e instalação em `pacotes/<realizacao>/<nome>`, `npm install` para pacotes com `pacoteNpm`, e o `pacoteca.lock` |
+| `fontes/autenticacao.delegua` | `interno/autenticacao/token.go`, `interno/comandos/autenticar.go` | Token em `~/.delegua/token` e retorno local do login pelo GitHub |
+| `fontes/cli.delegua` | `interno/comandos/` | Comandos `instalar`, `buscar`, `info`, `autenticar`, `publicar`, `sincronizar` e `publicar-versao` |
+| `fontes/pacote.delegua` | `main.go` | Ponto de entrada do programa `pacote` |
 
-Ainda faltam a autenticação e os comandos da linha de comando.
+Todo o pacote-go está portado.
+
+## Compilação
+
+```sh
+ilc fontes/pacote.delegua -o pacote
+```
+
+A URL da pacoteca-api vem da variável `PACOTECA_URL` (padrão: `https://pacoteca-api.herokuapp.com`). O `git` precisa estar instalado e no PATH, e o `npm` para pacotes com `pacoteNpm`.
 
 ## Diferenças em relação ao pacote-go
 
@@ -29,6 +40,8 @@ Ainda faltam a autenticação e os comandos da linha de comando.
 - Os campos JSON `tipo` de símbolos e argumentos viram `categoria` e `tipoDado`, porque `tipo` é palavra reservada.
 - O git é usado pelo programa `git` (precisa estar instalado e no PATH), e não por uma biblioteca como o go-git.
 - Nos testes, o pacote-go troca o clone, o npm e a saída por funções; aqui o `Instalador` tem um modo `simulado`, que registra os clones e as chamadas ao npm em vez de executá-los.
+- As opções da linha de comando são analisadas pelo próprio `fontes/cli.delegua` (o pacote-go usa a biblioteca cobra), com as mesmas opções e textos de ajuda. Erros saem como `Erro: <mensagem>` (o cobra escreve `Error: <mensagem>`).
+- No Windows, os argumentos chegam na página de código ANSI, não em UTF-8, então nomes com acentos passados na linha de comando podem chegar alterados. Nomes lidos do `pacoteca.jsonc` não são afetados.
 
 ## Testes
 

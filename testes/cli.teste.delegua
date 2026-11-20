@@ -1,0 +1,252 @@
+// Porte de interno/comandos/*_test.go do pacote-go, mais testes dos demais comandos e da
+// análise de opções. A linha de comando roda no mesmo processo (Cli.executar), contra a
+// pacoteca-api falsa de testes/servidor-registro.js, com um diretório pessoal temporário.
+importar { Verificador } de "./verificador"
+importar { Cli, ehTagValida, larguraTexto, preencher, analisarArgumentos } de "../fontes/cli"
+importar { lerTrava, PacoteTravado } de "../fontes/trava"
+importar { caminhoToken } de "../fontes/autenticacao"
+
+var v = Verificador("cli")
+var arquivos = importar("arquivos")
+var processo = importar("processo")
+var http = importar("http")
+
+var porta = processo.variavelAmbiente("PORTA_REGISTRO")
+se porta == nulo ou porta == "" {
+    escreva("cli: PORTA_REGISTRO não definida (execute pelo testes/executar.sh)")
+    processo.sair(1)
+}
+var url = "http://127.0.0.1:" + porta
+// A pacoteca-api falsa é compartilhada entre os arquivos de teste: começa dos dados iniciais.
+http.requisicaoPost(http.novoClienteHttp(url, 5000), "/__teste/reiniciar", "")
+
+var base = arquivos.juntarCaminhos(arquivos.diretorioAtual(), "tmp-cli-teste")
+arquivos.remover(base)
+arquivos.criarDiretorio(base)
+
+funcao diretorioTeste(nome: texto): texto {
+    var arquivos = importar("arquivos")
+    var caminho: texto = arquivos.juntarCaminhos(arquivos.juntarCaminhos(arquivos.diretorioAtual(), "tmp-cli-teste"), nome)
+    arquivos.criarDiretorio(caminho)
+    retorna caminho
+}
+
+// Diretório pessoal com o token aceito pela API falsa (`token` vazio: sem token).
+funcao pessoalComToken(nome: texto, token: texto): texto {
+    var arquivos = importar("arquivos")
+    var pessoal = diretorioTeste(nome)
+    se token != "" {
+        arquivos.criarDiretorio(arquivos.juntarCaminhos(pessoal, ".delegua"))
+        arquivos.escreverTexto(arquivos.juntarCaminhos(arquivos.juntarCaminhos(pessoal, ".delegua"), "token"), token + "\n")
+    }
+    retorna pessoal
+}
+
+funcao novaCli(url: texto, diretorio: texto, pessoal: texto): Cli {
+    var cli = Cli(url, diretorio, pessoal)
+    cli.imprimir = falso
+    cli.gitSilencioso = verdadeiro
+    retorna cli
+}
+
+funcao ultimaRequisicao(url: texto): texto {
+    var http = importar("http")
+    var cliente = http.novoClienteHttp(url, 5000)
+    var dados: texto = http.dados(http.requisicaoGet(cliente, "/ultima"))
+    retorna dados
+}
+
+funcao gitTeste(argumentos: texto[], diretorio: texto): texto {
+    var processo = importar("processo")
+    var completos: texto[] = ["-c", "user.name=teste", "-c", "user.email=teste@exemplo", "-c", "init.defaultBranch=principal", "-c", "core.autocrlf=false"]
+    para cada argumento em argumentos {
+        completos.adicionar(argumento)
+    }
+    var saida: texto = processo.executarCapturando("git", completos, diretorio)
+    retorna saida.aparar()
+}
+
+// TestInstalarDePontaAPonta
+var repositorio = diretorioTeste("saudacao-origem")
+gitTeste(["init", "--quiet"], repositorio)
+arquivos.escreverTexto(arquivos.juntarCaminhos(repositorio, "pacoteca.jsonc"), "{\n  // Pacote de teste\n  \"nome\": \"saudacao\",\n  \"versao\": \"1.0.0\",\n  \"realizacoes\": [\"node\", \"llvm\"],\n  \"pontoDeEntrada\": \"saudacao.delegua\"\n}")
+arquivos.escreverTexto(arquivos.juntarCaminhos(repositorio, "saudacao.delegua"), "funcao saudar(nome) {\n    escreva(\"Olá, \" + nome + \"!\")\n}\n")
+gitTeste(["add", "."], repositorio)
+gitTeste(["commit", "--quiet", "-m", "v1"], repositorio)
+gitTeste(["tag", "v1.0.0"], repositorio)
+var hash = gitTeste(["rev-parse", "HEAD"], repositorio)
+var urlRepositorio = "file:///" + repositorio.substituir("\\", "/")
+se repositorio.comecaCom("/") {
+    urlRepositorio = "file://" + repositorio
+}
+
+var json = importar("json")
+var pacoteJson = json.criarObjeto()
+json.definirCampo(pacoteJson, "id", json.criarTexto("1"))
+json.definirCampo(pacoteJson, "nome", json.criarTexto("saudacao"))
+json.definirCampo(pacoteJson, "urlRepositorio", json.criarTexto(urlRepositorio))
+json.definirCampo(pacoteJson, "nivelVerificacao", json.criarTexto("verificado"))
+var realizacoesJson = json.criarVetor()
+json.adicionarItem(realizacoesJson, json.criarTexto("node"))
+json.adicionarItem(realizacoesJson, json.criarTexto("llvm"))
+json.definirCampo(pacoteJson, "realizacoes", realizacoesJson)
+var naoPublicada = json.criarObjeto()
+json.definirCampo(naoPublicada, "versao", json.criarTexto("0.9.0"))
+json.definirCampo(naoPublicada, "tagGitHub", json.criarNulo())
+var publicada = json.criarObjeto()
+json.definirCampo(publicada, "versao", json.criarTexto("1.0.0"))
+json.definirCampo(publicada, "tagGitHub", json.criarTexto("v1.0.0"))
+json.definirCampo(publicada, "hashCommit", json.criarTexto(hash))
+json.definirCampo(publicada, "realizacoes", realizacoesJson)
+json.definirCampo(publicada, "pontoDeEntrada", json.criarTexto("saudacao.delegua"))
+json.definirCampo(publicada, "nivelVerificacao", json.criarTexto("verificado"))
+var versoesJson = json.criarVetor()
+json.adicionarItem(versoesJson, naoPublicada)
+json.adicionarItem(versoesJson, publicada)
+var registro = json.criarObjeto()
+json.definirCampo(registro, "pacote", pacoteJson)
+json.definirCampo(registro, "versoes", versoesJson)
+var clienteAdmin = http.novoClienteHttp(url, 5000)
+http.adicionarCabecalho(clienteAdmin, "Content-Type: application/json")
+http.requisicaoPost(clienteAdmin, "/__teste/registrar", json.objetoParaTextoJson(registro))
+
+var projeto = diretorioTeste("projeto")
+arquivos.escreverTexto(arquivos.juntarCaminhos(projeto, "pacoteca.jsonc"), "{\n  \"nome\": \"app\",\n  \"versao\": \"0.1.0\",\n  \"realizacoes\": [\"node\"],\n  \"dependencias\": { \"saudacao\": \"^1.0.0\" }\n}")
+var pessoalSemToken = pessoalComToken("pessoal-vazio", "")
+
+var cliInstalar = novaCli(url, projeto, pessoalSemToken)
+v.verificar(cliInstalar.executar(["instalar", "--realizacao", "node"]) == 0, "instalar: " + cliInstalar.textoErros)
+var entrada = arquivos.juntarCaminhos(arquivos.juntarCaminhos(arquivos.juntarCaminhos(arquivos.juntarCaminhos(projeto, "pacotes"), "node"), "saudacao"), "saudacao.delegua")
+v.verificar(arquivos.existe(entrada), "ponto de entrada instalado")
+v.verificar(nao arquivos.existe(arquivos.juntarCaminhos(arquivos.juntarCaminhos(projeto, "pacotes"), "llvm")), "--realizacao node não instala llvm")
+var trava = lerTrava(arquivos.juntarCaminhos(projeto, "pacoteca.lock"))
+var saudacaoTravada: PacoteTravado = trava.obter("saudacao")
+v.igual(saudacaoTravada.versao + " " + saudacaoTravada.hashCommit, "1.0.0 " + hash, "pacoteca.lock")
+v.contem(cliInstalar.textoSaida, "pacoteca.lock atualizado.", "saída do instalador")
+
+// Segunda execução, congelada: nada muda.
+var cliCongelado = novaCli(url, projeto, pessoalSemToken)
+v.verificar(cliCongelado.executar(["instalar", "--realizacao=node", "--congelado"]) == 0, "--congelado com trava em dia: " + cliCongelado.textoErros)
+v.contem(cliCongelado.textoSaida, "saudacao@1.0.0 (node) já instalado", "reinstalação não clona de novo")
+
+// Restrição que nenhuma versão publicada atende.
+var cliSemVersao = novaCli(url, projeto, pessoalSemToken)
+v.verificar(cliSemVersao.executar(["instalar", "saudacao@^2.0.0"]) == 1, "restrição sem versão falha")
+v.contem(cliSemVersao.textoErros, "nenhuma versão publicada", "mensagem de restrição sem versão")
+v.contem(cliSemVersao.textoErros, "Erro: ", "erro com prefixo")
+
+// TestPublicarVersaoUsaNomeDoManifesto
+var pessoalToken = pessoalComToken("pessoal-token", "token-teste")
+var projetoPublicar = diretorioTeste("publicar")
+arquivos.escreverTexto(arquivos.juntarCaminhos(projetoPublicar, "pacoteca.jsonc"), "{ /* x */ \"nome\": \"matemática\", \"versao\": \"1.2.0\" }")
+var cliPublicar = novaCli(url, projetoPublicar, pessoalToken)
+v.verificar(cliPublicar.executar(["publicar-versao", "v1.2.0"]) == 0, "publicar-versao: " + cliPublicar.textoErros)
+var requisicaoPublicar = ultimaRequisicao(url)
+v.contem(requisicaoPublicar, "\"metodo\":\"POST\",\"url\":\"/pacotes/matem%C3%A1tica/versoes\"", "rota com o nome do manifesto")
+v.contem(requisicaoPublicar, "\"autorizacao\":\"Bearer token-teste\"", "token do diretório pessoal")
+v.contem(requisicaoPublicar, "v1.2.0", "tag no corpo")
+v.contem(cliPublicar.textoSaida, "Versão 1.2.0 de 'matemática' publicada.", "saída do publicar-versao")
+v.contem(cliPublicar.textoSaida, "A análise de segurança está em andamento. Acompanhe com: pacote info matemática", "aviso de análise")
+v.igual(cliPublicar.textoErros, "", "tag igual à versão do manifesto não gera aviso")
+
+// Versão do manifesto diferente da tag: aviso.
+var cliAviso = novaCli(url, projetoPublicar, pessoalToken)
+cliAviso.executar(["publicar-versao", "v1.3.0"])
+v.contem(cliAviso.textoErros, "aviso: o pacoteca.jsonc local declara a versão 1.2.0", "aviso de versão diferente")
+
+// TestPublicarVersaoComPacoteExplicito
+var cliExplicito = novaCli(url, diretorioTeste("vazio"), pessoalToken)
+v.verificar(cliExplicito.executar(["publicar-versao", "2.0.0", "--pacote", "fisica"]) == 0, "publicar-versao --pacote")
+v.contem(ultimaRequisicao(url), "\"url\":\"/pacotes/fisica/versoes\"", "rota com --pacote")
+
+// TestPublicarVersaoMostraErroDaApi
+var cliConflito = novaCli(url, diretorioTeste("vazio"), pessoalToken)
+v.verificar(cliConflito.executar(["publicar-versao", "v9.9.9", "-p", "fisica"]) == 1, "erro da API falha")
+v.contem(cliConflito.textoErros, "409", "código do erro da API")
+v.contem(cliConflito.textoErros, "já foi publicada", "mensagem do erro da API")
+
+// TestPublicarVersaoValidaAntesDeChamarApi
+var antes = ultimaRequisicao(url)
+var cliTag = novaCli(url, diretorioTeste("vazio"), pessoalToken)
+v.verificar(cliTag.executar(["publicar-versao", "main", "-p", "fisica"]) == 1, "tag inválida falha")
+v.contem(cliTag.textoErros, "tag inválida", "mensagem de tag inválida")
+var cliSemManifesto = novaCli(url, diretorioTeste("vazio"), pessoalToken)
+v.verificar(cliSemManifesto.executar(["publicar-versao", "v1.0.0"]) == 1, "sem manifesto falha")
+v.contem(cliSemManifesto.textoErros, "--pacote", "mensagem sem manifesto")
+v.igual(ultimaRequisicao(url), antes, "a API não é chamada")
+
+// TestPublicarVersaoExigeAutenticacao
+var cliSemToken = novaCli(url, diretorioTeste("vazio"), pessoalSemToken)
+v.verificar(cliSemToken.executar(["publicar-versao", "v1.0.0", "-p", "fisica"]) == 1, "sem token falha")
+v.contem(cliSemToken.textoErros, "pacote autenticar", "mensagem sem token")
+
+// buscar
+var cliBuscar = novaCli(url, "", pessoalSemToken)
+v.verificar(cliBuscar.executar(["buscar", "-r", "llvm"]) == 0, "buscar")
+v.contem(cliBuscar.textoSaida, "NOME                 REALIZAÇÕES  DESCRIÇÃO\n", "cabeçalho alinhado por caracteres")
+v.contem(cliBuscar.textoSaida, "mat                  node,llvm    Matemática\n", "linha do pacote")
+v.contem(ultimaRequisicao(url), "/pacotes?realizacao=llvm", "filtro do buscar")
+
+// info
+var cliInfo = novaCli(url, "", pessoalSemToken)
+v.verificar(cliInfo.executar(["info", "mat"]) == 0, "info")
+v.contem(cliInfo.textoSaida, "Nome:          mat\nDescrição:     Matemática\nRepositório:   https://github.com/org/mat\nRealizações:   node,llvm\nVerificação:   verificado\n", "cabeçalho do info")
+v.contem(cliInfo.textoSaida, "  1.0.0 (tag: v1.0.0, commit: hash-1.0.0, verificação: verificado)", "versão publicada")
+v.contem(cliInfo.textoSaida, "  2.0.0 (não publicada: sem tag)", "versão não publicada")
+var cliInfoAusente = novaCli(url, "", pessoalSemToken)
+v.verificar(cliInfoAusente.executar(["info", "nada"]) == 1, "info de pacote ausente falha")
+v.contem(cliInfoAusente.textoErros, "pacote 'nada' não encontrado", "mensagem do info ausente")
+
+// autenticar --token, publicar e sincronizar
+var pessoalNovo = pessoalComToken("pessoal-novo", "")
+var cliToken = novaCli(url, "", pessoalNovo)
+v.verificar(cliToken.executar(["autenticar", "--token", "token-teste"]) == 0, "autenticar --token")
+v.contem(cliToken.textoSaida, "Token salvo com sucesso.", "saída do autenticar")
+var tokenGravado: texto = arquivos.lerTexto(caminhoToken(pessoalNovo))
+v.igual(tokenGravado, "token-teste", "token gravado")
+var cliRegistrar = novaCli(url, "", pessoalNovo)
+v.verificar(cliRegistrar.executar(["publicar", "https://github.com/org/novo"]) == 0, "publicar")
+v.contem(cliRegistrar.textoSaida, "Pacote 'novo' registrado com sucesso!", "saída do publicar")
+var cliSincronizar = novaCli(url, "", pessoalNovo)
+v.verificar(cliSincronizar.executar(["sincronizar", "mat"]) == 0, "sincronizar")
+v.contem(cliSincronizar.textoSaida, "Pacote 'mat' sincronizado.", "saída do sincronizar")
+
+// Ajuda e erros de uso
+var cliAjuda = novaCli(url, "", pessoalSemToken)
+v.verificar(cliAjuda.executar(["--help"]) == 0, "ajuda geral")
+v.contem(cliAjuda.textoSaida, "publicar-versao  Publica uma versão", "lista de comandos")
+var cliSemArgumentos = novaCli(url, "", pessoalSemToken)
+v.verificar(cliSemArgumentos.executar([]) == 0, "sem argumentos mostra a ajuda")
+var cliAjudaComando = novaCli(url, "", pessoalSemToken)
+v.verificar(cliAjudaComando.executar(["instalar", "-h"]) == 0, "ajuda do comando")
+v.contem(cliAjudaComando.textoSaida, "pacote instalar --congelado", "texto da ajuda do instalar")
+var cliDesconhecido = novaCli(url, "", pessoalSemToken)
+v.verificar(cliDesconhecido.executar(["xyz"]) == 1, "comando desconhecido falha")
+v.contem(cliDesconhecido.textoErros, "comando desconhecido \"xyz\"", "mensagem de comando desconhecido")
+var cliOpcao = novaCli(url, "", pessoalSemToken)
+v.verificar(cliOpcao.executar(["instalar", "--nada"]) == 1, "opção desconhecida falha")
+v.contem(cliOpcao.textoErros, "opção desconhecida: --nada", "mensagem de opção desconhecida")
+var cliSemValor = novaCli(url, "", pessoalSemToken)
+v.verificar(cliSemValor.executar(["buscar", "-r"]) == 1, "opção sem valor falha")
+v.contem(cliSemValor.textoErros, "precisa de um valor", "mensagem de opção sem valor")
+var cliArgumentos = novaCli(url, "", pessoalSemToken)
+v.verificar(cliArgumentos.executar(["info"]) == 1, "info sem nome falha")
+v.contem(cliArgumentos.textoErros, "espera 1 argumento(s), recebeu 0", "mensagem de quantidade de argumentos")
+
+// Auxiliares
+v.verificar(larguraTexto("REALIZAÇÕES") == 11, "largura em caracteres")
+v.igual(preencher("ção", 5), "ção  ", "preencher por caracteres")
+var tagsValidas: texto[] = ["1.2.0", "v1.2.0", "v1.0.0-beta.1+exp", "2"]
+para cada tag em tagsValidas {
+    v.verificar(ehTagValida(tag), "\"" + tag + "\" é tag válida")
+}
+var tagsInvalidas: texto[] = ["main", "v", "", "v1.0 0", "va1"]
+para cada tag em tagsInvalidas {
+    v.verificar(nao ehTagValida(tag), "\"" + tag + "\" não é tag válida")
+}
+var separados = analisarArgumentos("instalar", ["mat@^1", "--", "-r"])
+var posicionais: texto[] = separados.posicionais
+v.igual(posicionais.juntar("|"), "mat@^1|-r", "-- encerra as opções")
+
+arquivos.remover(base)
+v.finalizar()
