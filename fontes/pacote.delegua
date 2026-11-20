@@ -1,7 +1,7 @@
 // Ponto de entrada do programa `pacote`: lê os argumentos e a variável PACOTECA_URL e
 // executa a linha de comando (fontes/cli.delegua).
 //
-// Compilação: ilc fontes/pacote.delegua -o pacote
+// Compilação: delegua-llvm fontes/pacote.delegua -o pacote
 importar { Cli, urlApiPadrao } de "./cli"
 
 var argumentos = importar("argumentos")

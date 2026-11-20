@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 # Compila e executa cada testes/*.teste.delegua. Sai com código 1 se algum falhar.
 #
-# ILC escolhe o compilador (padrão: ilc do delegua-llvm instalado). Para usar um
-# delegua-llvm local:  ILC="npx ts-node /caminho/delegua-llvm/fontes/ilc.ts" testes/executar.sh
+# ILC escolhe o compilador (padrão: delegua-llvm, o comando instalado pelo pacote npm). Para
+# usar um delegua-llvm local:  ILC="npx ts-node /caminho/delegua-llvm/fontes/ilc.ts" testes/executar.sh
 set -u
 cd "$(dirname "$0")"
-ILC="${ILC:-ilc}"
+ILC="${ILC:-delegua-llvm}"
 extensao=""
 case "$(uname -s)" in MINGW*|MSYS*|CYGWIN*) extensao=".exe" ;; esac
 

@@ -1,0 +1,74 @@
+name: Testes
+
+on:
+  push:
+    branches:
+      - principal
+  pull_request:
+    branches:
+      - principal
+  workflow_dispatch:
+    inputs:
+      delegua-llvm:
+        description: 'Ramo, tag ou commit do delegua-llvm usado para compilar'
+        required: false
+        default: 'principal'
+
+env:
+  LLVM_VERSION_MAJOR: 22
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+jobs:
+  testes:
+    name: Testes (Linux)
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Checkout do pacote-delegua
+        uses: actions/checkout@v4
+
+      # O compilador vem do repositório do delegua-llvm (e não do npm) para usar as correções
+      # mais recentes de que o porte depende.
+      - name: Checkout do delegua-llvm
+        uses: actions/checkout@v4
+        with:
+          repository: DesignLiquido/delegua-llvm
+          ref: ${{ github.event.inputs.delegua-llvm || 'principal' }}
+          path: delegua-llvm
+
+      - name: Node.js 24
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24.x
+          cache: 'yarn'
+          cache-dependency-path: delegua-llvm/yarn.lock
+
+      - name: LLVM 22, clang e libcurl
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y wget gnupg lsb-release software-properties-common ninja-build libcurl4-openssl-dev
+          wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key | sudo gpg --dearmor -o /usr/share/keyrings/llvm-archive-keyring.gpg
+          echo "deb [signed-by=/usr/share/keyrings/llvm-archive-keyring.gpg] http://apt.llvm.org/noble/ llvm-toolchain-noble-${{ env.LLVM_VERSION_MAJOR }} main" | sudo tee /etc/apt/sources.list.d/llvm.list
+          sudo apt-get update
+          sudo apt-get install -y llvm-${{ env.LLVM_VERSION_MAJOR }}-dev clang-${{ env.LLVM_VERSION_MAJOR }}
+          echo "LLVM_DIR=/usr/lib/llvm-${{ env.LLVM_VERSION_MAJOR }}/cmake" >> $GITHUB_ENV
+          # O delegua-llvm compila o código C com `clang` (e usa o `opt`, se houver).
+          sudo ln -sf /usr/bin/clang-${{ env.LLVM_VERSION_MAJOR }} /usr/local/bin/clang
+          sudo ln -sf /usr/bin/opt-${{ env.LLVM_VERSION_MAJOR }} /usr/local/bin/opt
+          clang --version
+
+      - name: Compilação do delegua-llvm
+        working-directory: delegua-llvm
+        run: |
+          yarn install --frozen-lockfile
+          yarn empacotar
+
+      - name: Testes
+        run: testes/executar.sh
+        env:
+          ILC: node ${{ github.workspace }}/delegua-llvm/dist/ilc.js
+
+      - name: Compilação do programa pacote
+        run: |
+          node delegua-llvm/dist/ilc.js fontes/pacote.delegua -o pacote
+          PACOTECA_URL=http://127.0.0.1:1 fontes/pacote --help | head -1

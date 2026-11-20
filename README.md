@@ -26,8 +26,10 @@ Todo o pacote-go está portado.
 ## Compilação
 
 ```sh
-ilc fontes/pacote.delegua -o pacote
+delegua-llvm fontes/pacote.delegua -o pacote
 ```
+
+O binário fica em `fontes/pacote` (`fontes/pacote.exe` no Windows).
 
 A URL da pacoteca-api vem da variável `PACOTECA_URL` (padrão: `https://pacoteca-api.herokuapp.com`). O `git` precisa estar instalado e no PATH, e o `npm` para pacotes com `pacoteNpm`.
 
@@ -49,7 +51,7 @@ A URL da pacoteca-api vem da variável `PACOTECA_URL` (padrão: `https://pacotec
 testes/executar.sh
 ```
 
-O script compila e executa cada `testes/*.teste.delegua`. Ele também inicia uma pacoteca-api falsa (`testes/servidor-registro.js`, que precisa do Node.js) para os testes do cliente do registro. A variável `ILC` escolhe o compilador; o padrão é o `ilc` instalado. Para usar um delegua-llvm local:
+O script compila e executa cada `testes/*.teste.delegua`. Ele também inicia uma pacoteca-api falsa (`testes/servidor-registro.js`, que precisa do Node.js) para os testes do cliente do registro. A variável `ILC` escolhe o compilador; o padrão é o comando `delegua-llvm`, instalado pelo pacote npm. Para usar um delegua-llvm local:
 
 ```sh
 ILC="npx ts-node /caminho/delegua-llvm/fontes/ilc.ts" testes/executar.sh
