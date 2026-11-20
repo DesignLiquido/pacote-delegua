@@ -16,8 +16,9 @@ Portado até agora, dos pacotes `interno/*` do pacote-go, com os testes em Go co
 | `fontes/resolvedor.delegua` | `interno/resolvedor/resolvedor.go` | Resolução de dependências transitivas |
 | `fontes/git.delegua` | `interno/git/repositorio.go` | Instalação a partir do repositório git, fixada em um commit |
 | `fontes/registro.delegua` | `interno/registro/cliente.go` | Cliente HTTP da pacoteca-api; o resolvedor pode usá-lo como fonte (`fonteDoRegistro`) |
+| `fontes/instalador.delegua` | `interno/instalador/` | Resolução e instalação em `pacotes/<realizacao>/<nome>`, `npm install` para pacotes com `pacoteNpm`, e o `pacoteca.lock` |
 
-Ainda faltam o instalador, a autenticação e os comandos da linha de comando.
+Ainda faltam a autenticação e os comandos da linha de comando.
 
 ## Diferenças em relação ao pacote-go
 
@@ -27,6 +28,7 @@ Ainda faltam o instalador, a autenticação e os comandos da linha de comando.
 - `Fonte` (resolvedor) é uma classe concreta que guarda os pacotes em memória; o cliente da pacoteca-api preencherá a mesma estrutura.
 - Os campos JSON `tipo` de símbolos e argumentos viram `categoria` e `tipoDado`, porque `tipo` é palavra reservada.
 - O git é usado pelo programa `git` (precisa estar instalado e no PATH), e não por uma biblioteca como o go-git.
+- Nos testes, o pacote-go troca o clone, o npm e a saída por funções; aqui o `Instalador` tem um modo `simulado`, que registra os clones e as chamadas ao npm em vez de executá-los.
 
 ## Testes
 

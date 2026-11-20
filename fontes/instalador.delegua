@@ -1,0 +1,340 @@
+// Resolução e instalação de pacotes Delégua: pacotes/<realizacao>/<nome>/, fixados no
+// pacoteca.lock.
+//
+// Porte de interno/instalador do pacote-go. O pacote-go troca o clone, o npm e a saída por
+// funções nos testes; aqui (sem despacho dinâmico de métodos) o Instalador tem um modo
+// `simulado`, que registra os clones e as chamadas ao npm em vez de executá-los.
+
+importar { PacotecaJsonc, lerPacotecaJsonc } de "./modelos"
+importar { ErroJsonc } de "./jsonc"
+importar { Trava, lerTrava, gravarTrava, travasIguais, nomeArquivoTrava } de "./trava"
+importar { Fonte, Resultado, Resolvido, resolver } de "./resolvedor"
+importar { ClienteGit, jaInstalado } de "./git"
+
+classe ErroInstalacao herda Excecao {
+    construtor(mensagem: texto) {
+        super.construtor(mensagem)
+    }
+}
+
+// Onde os pacotes são instalados: pacotes/<realizacao>/<nome>/. A realização node de
+// Delégua (delegua-node) procura pacotes nesse mesmo caminho.
+funcao diretorioPacotes(): texto {
+    retorna "pacotes"
+}
+
+// O arquivo que declara o pacote e suas dependências.
+funcao nomeManifesto(): texto {
+    retorna "pacoteca.jsonc"
+}
+
+classe OpcoesInstalacao {
+    // Restringe a instalação a uma realização (node, llvm, cgd). Vazio: todas.
+    realizacao: texto
+    // Falha se o pacoteca.lock precisar mudar, em vez de atualizá-lo (para CI).
+    congelado: lógico
+    // Raiz do projeto. Vazio: diretório atual.
+    diretorio: texto
+
+    construtor() {
+        isto.realizacao = ""
+        isto.congelado = falso
+        isto.diretorio = ""
+    }
+}
+
+// "nome@restricao" separado.
+classe Especificacao {
+    nome: texto
+    restricao: texto
+
+    construtor(nome: texto, restricao: texto) {
+        isto.nome = nome
+        isto.restricao = restricao
+    }
+}
+
+funcao separarEspecificacao(especificacao: texto): Especificacao {
+    var limpa = especificacao.aparar()
+    var posicao: inteiro = limpa.encontrar("@")
+    se posicao < 0 {
+        retorna Especificacao(limpa, "")
+    }
+    var nome: texto = limpa.subtexto(0, posicao)
+    var restricao: texto = limpa.subtexto(posicao + 1, limpa.tamanho())
+    retorna Especificacao(nome.aparar(), restricao.aparar())
+}
+
+// Restrição sugerida para o pacoteca.jsonc após instalar uma versão.
+funcao sugestaoRestricao(pedida: texto, instalada: texto): texto {
+    se pedida != "" e pedida != "*" {
+        retorna pedida
+    }
+    retorna "^" + instalada
+}
+
+// Argumento de `npm install` para o pacoteNpm de uma versão. Se o pacoteNpm já fixar uma
+// versão ("@designliquido/delegua-json@0.4.0"), é usado como está; caso contrário, instala
+// a mesma versão publicada na Pacoteca. Em nomes com escopo, o primeiro '@' faz parte do nome.
+funcao especificacaoNpm(pacoteNpm: texto, versao: texto): texto {
+    se pacoteNpm.encontrarUltimo("@") > 0 {
+        retorna pacoteNpm
+    }
+    retorna pacoteNpm + "@" + versao
+}
+
+// Realizações suportadas filtradas pela solicitada (vazio: todas).
+funcao realizacoesAlvo(suportadas: texto[], solicitada: texto): texto[] {
+    var alvo: texto[] = []
+    para cada realizacao em suportadas {
+        se solicitada == "" ou realizacao == solicitada {
+            alvo.adicionar(realizacao)
+        }
+    }
+    retorna alvo
+}
+
+funcao ehRealizacaoConhecida(realizacao: texto): lógico {
+    retorna realizacao == "node" ou realizacao == "llvm" ou realizacao == "cgd"
+}
+
+// Orquestra a resolução e a instalação de pacotes Delégua.
+classe Instalador {
+    fonte: Fonte
+    opcoes: OpcoesInstalacao
+    git: ClienteGit
+
+    // Modo de teste: registra os clones ("pacotes/<realizacao>/<nome> <tag>@<hash>") e as
+    // chamadas ao npm (argumentos separados por espaço) em vez de executá-los.
+    simulado: lógico
+    clones: texto[]
+    chamadasNpm: texto[]
+
+    // Toda a saída, uma linha por chamada a saida(). `imprimir` também a escreve no terminal.
+    textoSaida: texto
+    imprimir: lógico
+
+    construtor(fonte: Fonte, opcoes: OpcoesInstalacao) {
+        isto.fonte = fonte
+        isto.opcoes = opcoes
+        isto.git = ClienteGit()
+        isto.simulado = falso
+        isto.clones = []
+        isto.chamadasNpm = []
+        isto.textoSaida = ""
+        isto.imprimir = verdadeiro
+    }
+
+    saida(linha: texto) {
+        isto.textoSaida = isto.textoSaida + linha + "\n"
+        se isto.imprimir {
+            escreva(linha)
+        }
+    }
+
+    // Caminho dentro do diretório do projeto.
+    caminho(relativo: texto): texto {
+        var arquivos = importar("arquivos")
+        se isto.opcoes.diretorio == "" {
+            retorna relativo
+        }
+        var completo: texto = arquivos.juntarCaminhos(isto.opcoes.diretorio, relativo)
+        retorna completo
+    }
+
+    caminhoPacote(realizacao: texto, nome: texto): texto {
+        var arquivos = importar("arquivos")
+        var relativo: texto = arquivos.juntarCaminhos(arquivos.juntarCaminhos(diretorioPacotes(), realizacao), nome)
+        retorna relativo
+    }
+
+    temManifesto(): lógico {
+        var arquivos = importar("arquivos")
+        retorna arquivos.existe(isto.caminho(nomeManifesto()))
+    }
+
+    // O pacoteca.jsonc do projeto. Verifique com temManifesto() antes.
+    lerManifesto(): PacotecaJsonc {
+        var arquivos = importar("arquivos")
+        var conteudo = arquivos.lerTexto(isto.caminho(nomeManifesto()))
+        se conteudo == nulo {
+            falhar ErroInstalacao("erro ao ler " + nomeManifesto())
+        }
+        tente {
+            retorna lerPacotecaJsonc(conteudo)
+        } pegue (erro: ErroJsonc) {
+            falhar ErroInstalacao("erro ao analisar " + nomeManifesto() + ": " + erro.mensagem)
+        }
+        retorna PacotecaJsonc()
+    }
+
+    // Instala as dependências declaradas no pacoteca.jsonc e as dependências delas,
+    // fixando o resultado no pacoteca.lock.
+    instalarDependencias() {
+        se nao isto.temManifesto() {
+            falhar ErroInstalacao(nomeManifesto() + " não encontrado no diretório atual")
+        }
+        var manifesto = isto.lerManifesto()
+        var nomes: texto[] = manifesto.dependencias.chaves()
+        se nomes.tamanho() == 0 {
+            isto.saida("Nenhuma dependência declarada em " + nomeManifesto() + ".")
+            retorna
+        }
+        isto.instalar(manifesto.dependencias, "", verdadeiro)
+    }
+
+    // Instala um pacote pelo nome, opcionalmente com restrição de versão ("matematica",
+    // "matematica@^1.2.0").
+    //
+    // Se houver pacoteca.jsonc, as demais dependências declaradas são resolvidas juntas,
+    // para que o pacoteca.lock continue completo e consistente. O pacoteca.jsonc não é
+    // alterado: se o pacote não estiver declarado, é exibida a linha a acrescentar em
+    // "dependencias".
+    instalarPacote(especificacao: texto) {
+        var pedido = separarEspecificacao(especificacao)
+        se pedido.nome == "" {
+            falhar ErroInstalacao("nome de pacote vazio")
+        }
+
+        var possuiManifesto: lógico = isto.temManifesto()
+        var raiz: dicionário = {}
+        var declarada = ""
+        var declarado = falso
+        se possuiManifesto {
+            var manifesto = isto.lerManifesto()
+            var nomes: texto[] = manifesto.dependencias.chaves()
+            para cada nome em nomes {
+                var restricaoDeclarada: texto = manifesto.dependencias[nome]
+                raiz[nome] = restricaoDeclarada
+            }
+            se manifesto.dependencias.contem(pedido.nome) {
+                declarada = manifesto.dependencias[pedido.nome]
+                declarado = verdadeiro
+            }
+        }
+        se pedido.restricao != "" {
+            raiz[pedido.nome] = pedido.restricao
+        } senao {
+            se nao declarado {
+                raiz[pedido.nome] = "*"
+            }
+        }
+
+        var resultado: Resultado = isto.instalar(raiz, pedido.nome, possuiManifesto)
+        var resolvido: Resolvido = resultado.obter(pedido.nome)
+        var versao: texto = resolvido.pacote.versao
+
+        se nao possuiManifesto {
+            isto.saida("")
+            isto.saida("Sem " + nomeManifesto() + " neste diretório: o " + nomeArquivoTrava() + " não foi gravado. Crie um " + nomeManifesto() + " com:")
+            isto.saida("  \"dependencias\": { \"" + pedido.nome + "\": \"^" + versao + "\" }")
+            retorna
+        }
+        se nao declarado ou (pedido.restricao != "" e pedido.restricao != declarada) {
+            isto.saida("")
+            isto.saida("Acrescente (ou atualize) em \"dependencias\" no " + nomeManifesto() + ":")
+            isto.saida("  \"" + pedido.nome + "\": \"" + sugestaoRestricao(pedido.restricao, versao) + "\"")
+        }
+    }
+
+    // Resolve as versões, instala cada pacote e grava o pacoteca.lock. `alvoDireto` é o
+    // pacote pedido explicitamente na linha de comando ("" para nenhum).
+    instalar(raiz: dicionário, alvoDireto: texto, gravar: lógico): Resultado {
+        var caminhoTrava = isto.caminho(nomeArquivoTrava())
+        var travaAtual = lerTrava(caminhoTrava)
+
+        isto.saida("Resolvendo dependências...")
+        var resultado = resolver(isto.fonte, raiz, travaAtual)
+
+        var novaTrava: Trava = resultado.paraTrava()
+        var travaEmDia: lógico = travasIguais(travaAtual, novaTrava)
+        se isto.opcoes.congelado e nao travaEmDia {
+            falhar ErroInstalacao("o " + nomeArquivoTrava() + " está desatualizado em relação ao " + nomeManifesto() + "; rode 'pacote instalar' sem --congelado e versione o resultado")
+        }
+
+        var nomes: texto[] = resultado.nomes()
+        para cada nome em nomes {
+            isto.instalarResolvido(resultado.obter(nome), nome == alvoDireto)
+        }
+
+        se gravar e nao travaEmDia {
+            gravarTrava(novaTrava, caminhoTrava)
+            isto.saida(nomeArquivoTrava() + " atualizado.")
+        }
+        retorna resultado
+    }
+
+    instalarResolvido(resolvido: Resolvido, direto: lógico) {
+        var pacote = resolvido.pacote
+        var suportadas: texto[] = pacote.realizacoes
+        var realizacoes: texto[] = realizacoesAlvo(suportadas, isto.opcoes.realizacao)
+        se realizacoes.tamanho() == 0 {
+            se direto {
+                falhar ErroInstalacao("pacote '" + resolvido.nome + "' não suporta a realização '" + isto.opcoes.realizacao + "' (suporta: " + suportadas.juntar(", ") + ")")
+            }
+            isto.saida("  " + resolvido.nome + "@" + pacote.versao + " ignorado: não suporta a realização '" + isto.opcoes.realizacao + "'")
+            retorna
+        }
+
+        var nivel = resolvido.nivelVerificacao
+        se nivel != "verificado" e nivel != "certificado" {
+            se nivel == "" {
+                nivel = "desconhecido"
+            }
+            isto.saida("  aviso: " + resolvido.nome + "@" + pacote.versao + " ainda não passou na verificação de segurança (nível: " + nivel + ")")
+        }
+
+        para cada realizacao em realizacoes {
+            tente {
+                isto.instalarParaRealizacao(resolvido, realizacao)
+            } pegue (erro: Excecao) {
+                falhar ErroInstalacao("erro ao instalar " + resolvido.nome + "@" + pacote.versao + " para " + realizacao + ": " + erro.mensagem)
+            }
+        }
+    }
+
+    instalarParaRealizacao(resolvido: Resolvido, realizacao: texto) {
+        var pacote = resolvido.pacote
+        se nao ehRealizacaoConhecida(realizacao) {
+            falhar ErroInstalacao("realização desconhecida: " + realizacao)
+        }
+
+        se realizacao == "node" e pacote.pacoteNpm != "" {
+            var especificacao = especificacaoNpm(pacote.pacoteNpm, pacote.versao)
+            isto.saida("  " + resolvido.nome + "@" + pacote.versao + " (node) → npm install " + especificacao)
+            isto.executarNpm(["install", especificacao])
+            retorna
+        }
+
+        var relativo = isto.caminhoPacote(realizacao, resolvido.nome)
+        var situacao: inteiro = 0
+        se isto.simulado {
+            isto.clones.adicionar(diretorioPacotes() + "/" + realizacao + "/" + resolvido.nome + " " + pacote.tag + "@" + pacote.hashCommit)
+            situacao = 1
+        } senao {
+            situacao = isto.git.clonarCommit(pacote.urlRepositorio, isto.caminho(relativo), pacote.tag, pacote.hashCommit)
+        }
+        se situacao == jaInstalado() {
+            isto.saida("  " + resolvido.nome + "@" + pacote.versao + " (" + realizacao + ") já instalado")
+        } senao {
+            isto.saida("  " + resolvido.nome + "@" + pacote.versao + " (" + realizacao + ") → " + relativo)
+        }
+    }
+
+    // Executa o npm no diretório do projeto.
+    executarNpm(argumentos: texto[]) {
+        var processo = importar("processo")
+        se isto.simulado {
+            isto.chamadasNpm.adicionar(argumentos.juntar(" "))
+            retorna
+        }
+        var npm = "npm"
+        se processo.sistemaOperacional() == "windows" {
+            npm = "npm.cmd"
+        }
+        var codigo: inteiro = processo.executar(npm, argumentos, isto.opcoes.diretorio)
+        se codigo != 0 {
+            falhar ErroInstalacao("erro ao executar npm " + argumentos.juntar(" ") + ": código de saída " + texto(codigo))
+        }
+    }
+}
