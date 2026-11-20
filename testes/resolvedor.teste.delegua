@@ -151,8 +151,7 @@ var fonte10 = Fonte()
 fonte10.adicionarVersao("mat", publicada("1.0.0", nenhuma))
 var raiz10: dicionário = {}
 raiz10["mat"] = "*"
-var resultado10: Resultado = resolver(fonte10, raiz10, Trava())
-var trava10: Trava = resultado10.paraTrava()
+var trava10 = resolver(fonte10, raiz10, Trava()).paraTrava()
 var mat10: PacoteTravado = trava10.obter("mat")
 v.verificar(mat10.hashCommit == "hash-1.0.0" e trava10.formato == 1, "trava do resultado")
 

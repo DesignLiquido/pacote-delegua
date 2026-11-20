@@ -104,14 +104,15 @@ funcao campoTexto(objeto: texto, nome: texto): texto {
 
 funcao campoInteiro(objeto: texto, nome: texto): inteiro {
     var json = importar("json")
-    var resultado: inteiro = 0
-    se json.contemCampo(objeto, nome) {
-        var valor = json.obterCampo(objeto, nome)
-        se json.tipo(valor) == "numero" {
-            var numero = json.valorNumero(valor)
-            resultado = inteiro(numero)
-        }
+    se nao json.contemCampo(objeto, nome) {
+        retorna 0
     }
+    var valor = json.obterCampo(objeto, nome)
+    se json.tipo(valor) != "numero" {
+        retorna 0
+    }
+    var numero = json.valorNumero(valor)
+    var resultado: inteiro = inteiro(numero)
     retorna resultado
 }
 

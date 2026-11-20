@@ -127,6 +127,45 @@ funcao analisarVersao(entrada: texto): Versao {
     retorna versao
 }
 
+// -1, 0 ou 1 conforme a seja menor, igual ou maior que b. Metadados não contam.
+funcao compararVersoes(a: Versao, b: Versao): inteiro {
+    var resultado: inteiro = compararInteiros(a.maior, b.maior)
+    se resultado != 0 {
+        retorna resultado
+    }
+    resultado = compararInteiros(a.menor, b.menor)
+    se resultado != 0 {
+        retorna resultado
+    }
+    resultado = compararInteiros(a.correcao, b.correcao)
+    se resultado != 0 {
+        retorna resultado
+    }
+
+    var preA: texto[] = a.preLancamento
+    var preB: texto[] = b.preLancamento
+    // Sem pré-lançamento tem precedência sobre com pré-lançamento.
+    se preA.tamanho() == 0 e preB.tamanho() == 0 {
+        retorna 0
+    }
+    se preA.tamanho() == 0 {
+        retorna 1
+    }
+    se preB.tamanho() == 0 {
+        retorna -1
+    }
+
+    var i = 0
+    enquanto i < preA.tamanho() e i < preB.tamanho() {
+        resultado = compararIdentificadores(preA[i], preB[i])
+        se resultado != 0 {
+            retorna resultado
+        }
+        i = i + 1
+    }
+    retorna compararInteiros(preA.tamanho(), preB.tamanho())
+}
+
 // Compara dois números sem zero à esquerda escritos como texto, de qualquer tamanho.
 funcao compararNumerosTexto(a: texto, b: texto): inteiro {
     se a.tamanho() != b.tamanho() {
@@ -174,48 +213,6 @@ funcao compararInteiros(a: inteiro, b: inteiro): inteiro {
         retorna 1
     }
     retorna 0
-}
-
-// Precedência entre listas de pré-lançamento. Sem pré-lançamento tem precedência
-// sobre com pré-lançamento.
-//
-// (O avaliador sintático infere os literais de retorno como `número` e uma variável
-// `inteiro` como `inteiro`, e rejeita a mistura; por isso os retornos aqui são só literais
-// e chamadas.)
-funcao compararPreLancamento(preA: texto[], preB: texto[]): inteiro {
-    se preA.tamanho() == 0 e preB.tamanho() == 0 {
-        retorna 0
-    }
-    se preA.tamanho() == 0 {
-        retorna 1
-    }
-    se preB.tamanho() == 0 {
-        retorna -1
-    }
-    var i = 0
-    enquanto i < preA.tamanho() e i < preB.tamanho() {
-        var resultado: inteiro = compararIdentificadores(preA[i], preB[i])
-        se resultado != 0 {
-            retorna compararInteiros(resultado, 0)
-        }
-        i = i + 1
-    }
-    retorna compararInteiros(preA.tamanho(), preB.tamanho())
-}
-
-// -1, 0 ou 1 conforme a seja menor, igual ou maior que b. Metadados não contam.
-funcao compararVersoes(a: Versao, b: Versao): inteiro {
-    var resultado: inteiro = compararInteiros(a.maior, b.maior)
-    se resultado == 0 {
-        resultado = compararInteiros(a.menor, b.menor)
-    }
-    se resultado == 0 {
-        resultado = compararInteiros(a.correcao, b.correcao)
-    }
-    se resultado == 0 {
-        resultado = compararPreLancamento(a.preLancamento, b.preLancamento)
-    }
-    retorna resultado
 }
 
 funcao textoVersao(versao: Versao): texto {
