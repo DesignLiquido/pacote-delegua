@@ -37,4 +37,4 @@ O script compila e executa cada `testes/*.teste.delegua`. A variável `ILC` esco
 ILC="npx ts-node /caminho/delegua-llvm/fontes/ilc.ts" testes/executar.sh
 ```
 
-O porte exige um delegua-llvm com as correções de [delegua-llvm#29](https://github.com/DesignLiquido/delegua-llvm/pull/29) e o núcleo `@designliquido/delegua` 1.28.5 ou posterior.
+O porte exige um delegua-llvm com [delegua-llvm#29](https://github.com/DesignLiquido/delegua-llvm/pull/29) e [delegua-llvm#30](https://github.com/DesignLiquido/delegua-llvm/pull/30), que usa o núcleo `@designliquido/delegua` 1.28.6 ou posterior.

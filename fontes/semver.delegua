@@ -60,11 +60,7 @@ funcao ehNumeroSemZeroAEsquerda(valor: texto): lógico {
     se nao ehDigitos(valor) {
         retorna falso
     }
-    se valor == "0" {
-        retorna verdadeiro
-    }
-    var primeiro: texto = valor[0]
-    retorna primeiro != "0"
+    retorna valor == "0" ou valor[0] != "0"
 }
 
 funcao erroVersao(entrada: texto, detalhe: texto): ErroVersaoInvalida {
