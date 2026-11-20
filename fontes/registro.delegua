@@ -1,0 +1,180 @@
+// Cliente HTTP da pacoteca-api.
+//
+// Porte de interno/registro/cliente.go do pacote-go. Usa o módulo `http` (WinHTTP no
+// Windows, libcurl nos demais sistemas) e o módulo `json`.
+
+importar { PacoteRegistro, VersaoRegistro, pacoteRegistroDeJson, versaoRegistroDeJson } de "./modelos"
+importar { campoTexto } de "./jsonc"
+
+// Falha ao falar com a pacoteca-api. `codigoStatus` é o código HTTP da resposta, ou 0 se
+// não houve resposta (servidor inacessível, tempo esgotado...).
+classe ErroRegistro herda Excecao {
+    codigoStatus: inteiro
+
+    construtor(mensagem: texto, codigoStatus: inteiro) {
+        super.construtor(mensagem)
+        isto.codigoStatus = codigoStatus
+    }
+}
+
+// Tempo máximo de cada requisição, em milissegundos (como o http.Client do pacote-go).
+funcao tempoMaximoRegistro(): inteiro {
+    retorna 15000
+}
+
+funcao codificarComponente(valor: texto): texto {
+    var rede = importar("rede")
+    var codificado: texto = rede.codificarComponenteUrl(valor)
+    retorna codificado
+}
+
+// Mensagem de erro de uma resposta com código >= 400: o campo "erro" do JSON, se houver.
+funcao mensagemErroApi(corpo: texto): texto {
+    var json = importar("json")
+    se corpo == nulo {
+        retorna ""
+    }
+    var objeto = json.textoParaJson(corpo)
+    se objeto == nulo ou json.tipo(objeto) != "objeto" {
+        retorna ""
+    }
+    retorna campoTexto(objeto, "erro")
+}
+
+classe ClienteRegistro {
+    urlBase: texto
+    token: texto
+    // Clientes do módulo `http`, criados na primeira requisição: um para leituras e outro
+    // para envios (com Content-Type: application/json).
+    clienteLeitura: texto
+    clienteEnvio: texto
+    clientesProntos: lógico
+
+    construtor(urlBase: texto, token: texto) {
+        var base = urlBase
+        enquanto base.terminaCom("/") {
+            base = base.subtexto(0, base.tamanho() - 1)
+        }
+        isto.urlBase = base
+        isto.token = token
+        isto.clienteLeitura = ""
+        isto.clienteEnvio = ""
+        isto.clientesProntos = falso
+    }
+
+    prepararClientes() {
+        var http = importar("http")
+        se isto.clientesProntos {
+            retorna
+        }
+        isto.clienteLeitura = http.novoClienteHttp(isto.urlBase, tempoMaximoRegistro())
+        isto.clienteEnvio = http.novoClienteHttp(isto.urlBase, tempoMaximoRegistro())
+        http.adicionarCabecalho(isto.clienteEnvio, "Content-Type: application/json")
+        se isto.token != "" {
+            http.adicionarCabecalho(isto.clienteLeitura, "Authorization: Bearer " + isto.token)
+            http.adicionarCabecalho(isto.clienteEnvio, "Authorization: Bearer " + isto.token)
+        }
+        isto.clientesProntos = verdadeiro
+    }
+
+    // Faz a requisição e devolve o JSON da resposta (identificador do módulo `json`).
+    // `metodo` é "GET" ou "POST". Num GET, 404 vira "não encontrado", como no pacote-go.
+    requisitar(metodo: texto, caminho: texto, corpo: texto): texto {
+        var http = importar("http")
+        var json = importar("json")
+        isto.prepararClientes()
+
+        var resposta = nulo
+        se metodo == "GET" {
+            resposta = http.requisicaoGet(isto.clienteLeitura, caminho)
+        } senao {
+            resposta = http.requisicaoPost(isto.clienteEnvio, caminho, corpo)
+        }
+        se resposta == nulo {
+            falhar ErroRegistro("erro ao conectar à API: " + isto.urlBase + caminho, 0)
+        }
+
+        var codigo: inteiro = http.codigoStatus(resposta)
+        var dados: texto = http.dados(resposta)
+        var objeto = json.textoParaJson(dados)
+        var mensagem = ""
+        se codigo >= 400 {
+            mensagem = mensagemErroApi(dados)
+        }
+        http.liberarResposta(resposta)
+
+        se metodo == "GET" e codigo == 404 {
+            falhar ErroRegistro("não encontrado", codigo)
+        }
+        se codigo >= 400 {
+            falhar ErroRegistro("API retornou erro " + texto(codigo) + ": " + mensagem, codigo)
+        }
+        se objeto == nulo {
+            falhar ErroRegistro("resposta inválida da API em " + caminho, codigo)
+        }
+        retorna objeto
+    }
+
+    // Metadados de um pacote pelo nome.
+    buscarPacote(nome: texto): PacoteRegistro {
+        var objeto = isto.requisitar("GET", "/pacotes/" + codificarComponente(nome), "")
+        retorna pacoteRegistroDeJson(objeto)
+    }
+
+    // Todos os pacotes, com filtragem opcional por realização ("" para todos).
+    listarPacotes(realizacao: texto): PacoteRegistro[] {
+        var json = importar("json")
+        var caminho = "/pacotes"
+        se realizacao != "" {
+            caminho = caminho + "?realizacao=" + codificarComponente(realizacao)
+        }
+        var lista = isto.requisitar("GET", caminho, "")
+        var pacotes: PacoteRegistro[] = []
+        se json.tipo(lista) == "vetor" {
+            var total: inteiro = json.tamanho(lista)
+            para (var i = 0; i < total; i = i + 1) {
+                pacotes.adicionar(pacoteRegistroDeJson(json.obterItem(lista, i)))
+            }
+        }
+        retorna pacotes
+    }
+
+    // Versões de um pacote.
+    listarVersoes(nome: texto): VersaoRegistro[] {
+        var json = importar("json")
+        var lista = isto.requisitar("GET", "/pacotes/" + codificarComponente(nome) + "/versoes", "")
+        var versoes: VersaoRegistro[] = []
+        se json.tipo(lista) == "vetor" {
+            var total: inteiro = json.tamanho(lista)
+            para (var i = 0; i < total; i = i + 1) {
+                versoes.adicionar(versaoRegistroDeJson(json.obterItem(lista, i)))
+            }
+        }
+        retorna versoes
+    }
+
+    // Registra um novo pacote (exige token).
+    publicarPacote(urlRepositorio: texto): PacoteRegistro {
+        var json = importar("json")
+        var corpo = json.criarObjeto()
+        json.definirCampo(corpo, "urlRepositorio", json.criarTexto(urlRepositorio))
+        var objeto = isto.requisitar("POST", "/pacotes", json.objetoParaTextoJson(corpo))
+        retorna pacoteRegistroDeJson(objeto)
+    }
+
+    // Publica uma versão a partir de uma tag do repositório (exige token). A API lê o
+    // pacoteca.jsonc no commit da tag e dispara a análise de segurança.
+    publicarVersao(nome: texto, tag: texto): VersaoRegistro {
+        var json = importar("json")
+        var corpo = json.criarObjeto()
+        json.definirCampo(corpo, "tag", json.criarTexto(tag))
+        var objeto = isto.requisitar("POST", "/pacotes/" + codificarComponente(nome) + "/versoes", json.objetoParaTextoJson(corpo))
+        retorna versaoRegistroDeJson(objeto)
+    }
+
+    // Busca de novo o pacoteca.jsonc e atualiza o registro (exige token).
+    sincronizarPacote(nome: texto): PacoteRegistro {
+        var objeto = isto.requisitar("POST", "/pacotes/" + codificarComponente(nome) + "/sincronizar", "")
+        retorna pacoteRegistroDeJson(objeto)
+    }
+}

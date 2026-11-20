@@ -15,8 +15,9 @@ Portado até agora, dos pacotes `interno/*` do pacote-go, com os testes em Go co
 | `fontes/trava.delegua` | `interno/trava/trava.go` | Leitura e gravação do `pacoteca.lock`, no mesmo formato do Go |
 | `fontes/resolvedor.delegua` | `interno/resolvedor/resolvedor.go` | Resolução de dependências transitivas |
 | `fontes/git.delegua` | `interno/git/repositorio.go` | Instalação a partir do repositório git, fixada em um commit |
+| `fontes/registro.delegua` | `interno/registro/cliente.go` | Cliente HTTP da pacoteca-api; o resolvedor pode usá-lo como fonte (`fonteDoRegistro`) |
 
-Ainda faltam o cliente da pacoteca-api, o instalador, a autenticação e os comandos da linha de comando.
+Ainda faltam o instalador, a autenticação e os comandos da linha de comando.
 
 ## Diferenças em relação ao pacote-go
 
@@ -33,7 +34,7 @@ Ainda faltam o cliente da pacoteca-api, o instalador, a autenticação e os coma
 testes/executar.sh
 ```
 
-O script compila e executa cada `testes/*.teste.delegua`. A variável `ILC` escolhe o compilador; o padrão é o `ilc` instalado. Para usar um delegua-llvm local:
+O script compila e executa cada `testes/*.teste.delegua`. Ele também inicia uma pacoteca-api falsa (`testes/servidor-registro.js`, que precisa do Node.js) para os testes do cliente do registro. A variável `ILC` escolhe o compilador; o padrão é o `ilc` instalado. Para usar um delegua-llvm local:
 
 ```sh
 ILC="npx ts-node /caminho/delegua-llvm/fontes/ilc.ts" testes/executar.sh

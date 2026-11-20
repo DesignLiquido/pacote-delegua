@@ -1,0 +1,126 @@
+// Testes de fontes/registro.delegua (o pacote-go não tem testes para interno/registro),
+// contra a pacoteca-api falsa de testes/servidor-registro.js. O testes/executar.sh inicia o
+// servidor e informa a porta em PORTA_REGISTRO.
+importar { Verificador } de "./verificador"
+importar { ClienteRegistro, ErroRegistro } de "../fontes/registro"
+importar { PacoteRegistro, VersaoRegistro } de "../fontes/modelos"
+importar { Trava } de "../fontes/trava"
+importar { Fonte, Resolvido, Resultado, fonteDoRegistro, resolver, ErroResolucao } de "../fontes/resolvedor"
+
+var v = Verificador("registro")
+var processo = importar("processo")
+var http = importar("http")
+
+var porta = processo.variavelAmbiente("PORTA_REGISTRO")
+se porta == nulo ou porta == "" {
+    escreva("registro: PORTA_REGISTRO não definida (execute pelo testes/executar.sh)")
+    processo.sair(1)
+}
+var url = "http://127.0.0.1:" + porta
+
+// A última requisição que o servidor recebeu, como texto JSON.
+funcao ultimaRequisicao(url: texto): texto {
+    var http = importar("http")
+    var cliente = http.novoClienteHttp(url, 5000)
+    var resposta = http.requisicaoGet(cliente, "/ultima")
+    var dados: texto = http.dados(resposta)
+    retorna dados
+}
+
+// Mensagem do erro e código ("código: mensagem"); "" se não falhou.
+funcao erroAoPublicar(cliente: ClienteRegistro, nome: texto, tag: texto): texto {
+    tente {
+        cliente.publicarVersao(nome, tag)
+    } pegue (erro: ErroRegistro) {
+        retorna texto(erro.codigoStatus) + ": " + erro.mensagem
+    }
+    retorna ""
+}
+
+funcao erroAoBuscar(cliente: ClienteRegistro, nome: texto): texto {
+    tente {
+        cliente.buscarPacote(nome)
+    } pegue (erro: ErroRegistro) {
+        retorna texto(erro.codigoStatus) + ": " + erro.mensagem
+    }
+    retorna ""
+}
+
+var anonimo = ClienteRegistro(url + "/", "")
+var autenticado = ClienteRegistro(url, "token-teste")
+
+// buscarPacote
+var mat = anonimo.buscarPacote("mat")
+v.igual(mat.id + " " + mat.urlRepositorio + " " + mat.descricao, "p1 https://github.com/org/mat Matemática", "buscarPacote")
+v.contem(ultimaRequisicao(url), "\"url\":\"/pacotes/mat\"", "barra final da URL base removida")
+v.contem(ultimaRequisicao(url), "\"autorizacao\":\"\"", "sem token não envia Authorization")
+var ab = anonimo.buscarPacote("a b")
+v.igual(ab.nome, "a b", "nome com espaço")
+v.contem(ultimaRequisicao(url), "\"url\":\"/pacotes/a%20b\"", "nome codificado na URL")
+
+// 404 em leitura vira "não encontrado"
+v.igual(erroAoBuscar(anonimo, "nada"), "404: não encontrado", "pacote inexistente")
+// 500 sem JSON
+v.igual(erroAoBuscar(anonimo, "quebrado"), "500: API retornou erro 500: ", "erro sem corpo JSON")
+// Servidor inacessível
+v.contem(erroAoBuscar(ClienteRegistro("http://127.0.0.1:1", ""), "mat"), "0: erro ao conectar à API", "servidor inacessível")
+
+// listarPacotes
+var todos: PacoteRegistro[] = anonimo.listarPacotes("")
+v.verificar(todos.tamanho() == 3, "listarPacotes sem filtro: " + texto(todos.tamanho()))
+var llvm: PacoteRegistro[] = anonimo.listarPacotes("llvm")
+v.verificar(llvm.tamanho() == 1, "listarPacotes filtrado")
+v.contem(ultimaRequisicao(url), "\"url\":\"/pacotes?realizacao=llvm\"", "filtro na query")
+
+// listarVersoes
+var versoes: VersaoRegistro[] = autenticado.listarVersoes("mat")
+v.verificar(versoes.tamanho() == 3, "listarVersoes")
+v.contem(ultimaRequisicao(url), "\"autorizacao\":\"Bearer token-teste\"", "token enviado na leitura")
+var segunda: VersaoRegistro = versoes[1]
+var restricaoFisica: texto = segunda.dependencias["fisica"]
+v.igual(segunda.versao + " " + restricaoFisica, "1.1.0 ^0.5", "versão com dependências")
+var terceira: VersaoRegistro = versoes[2]
+v.verificar(nao terceira.publicada(), "versão sem tag não publicada")
+
+// publicarPacote (POST com JSON e token)
+var novo = autenticado.publicarPacote("https://github.com/org/novo")
+v.igual(novo.nome, "novo", "publicarPacote")
+var requisicaoPublicar = ultimaRequisicao(url)
+v.contem(requisicaoPublicar, "\"tipo\":\"application/json\"", "POST envia Content-Type JSON")
+v.contem(requisicaoPublicar, "urlRepositorio", "corpo do publicarPacote")
+
+// publicarVersao
+var nova = autenticado.publicarVersao("mat", "v1.2.0")
+v.igual(nova.versao + " " + nova.nivelVerificacao, "1.2.0 em_analise", "publicarVersao")
+v.contem(ultimaRequisicao(url), "\"url\":\"/pacotes/mat/versoes\"", "rota do publicarVersao")
+v.igual(erroAoPublicar(autenticado, "mat", "v9.9.9"), "409: API retornou erro 409: a versão 9.9.9 já foi publicada", "erro da API com mensagem")
+v.igual(erroAoPublicar(anonimo, "mat", "v1.2.0"), "401: API retornou erro 401: token ausente ou inválido", "POST sem token")
+
+// sincronizarPacote
+var sincronizado = autenticado.sincronizarPacote("mat")
+v.igual(sincronizado.nome, "mat", "sincronizarPacote")
+v.contem(ultimaRequisicao(url), "\"url\":\"/pacotes/mat/sincronizar\"", "rota do sincronizar")
+
+// Resolução com a fonte da pacoteca-api
+var fonte = fonteDoRegistro(anonimo)
+var raiz: dicionário = {}
+raiz["mat"] = "^1.0.0"
+var resultado = resolver(fonte, raiz, Trava())
+var nomes: texto[] = resultado.nomes()
+v.igual(nomes.juntar(","), "fisica,mat", "resolução busca as dependências no registro")
+var matResolvido: Resolvido = resultado.obter("mat")
+v.igual(matResolvido.pacote.versao + " " + matResolvido.pacote.urlRepositorio, "1.1.0 https://github.com/org/mat", "versão e URL vindas do registro")
+
+funcao erroAoResolver(fonte: Fonte, raiz: dicionário): texto {
+    tente {
+        resolver(fonte, raiz, Trava())
+    } pegue (erro: ErroResolucao) {
+        retorna erro.mensagem
+    }
+    retorna ""
+}
+var raizInexistente: dicionário = {}
+raizInexistente["nada"] = "*"
+v.contem(erroAoResolver(fonte, raizInexistente), "pacote 'nada' (pacoteca.jsonc exige nada *) não encontrado no registro: não encontrado", "pacote ausente no registro")
+
+v.finalizar()

@@ -9,6 +9,21 @@ ILC="${ILC:-ilc}"
 extensao=""
 case "$(uname -s)" in MINGW*|MSYS*|CYGWIN*) extensao=".exe" ;; esac
 
+# pacoteca-api falsa para registro.teste.delegua (precisa do Node.js).
+arquivo_porta="$(mktemp)"
+node servidor-registro.js "$arquivo_porta" &
+pid_servidor=$!
+trap 'kill "$pid_servidor" 2>/dev/null; rm -f "$arquivo_porta"' EXIT
+for _ in $(seq 1 50); do
+    [ -s "$arquivo_porta" ] && break
+    sleep 0.1
+done
+if [ ! -s "$arquivo_porta" ]; then
+    echo "não foi possível iniciar a pacoteca-api falsa (testes/servidor-registro.js)"
+    exit 1
+fi
+export PORTA_REGISTRO="$(cat "$arquivo_porta")"
+
 falhas=0
 for fonte in *.teste.delegua; do
     nome="${fonte%.delegua}"

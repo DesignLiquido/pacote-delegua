@@ -7,6 +7,7 @@ importar { Versao, analisarVersao, compararVersoes, ErroVersaoInvalida } de "./s
 importar { Restricao, analisarRestricao, ErroRestricaoInvalida } de "./restricao"
 importar { PacoteRegistro, VersaoRegistro } de "./modelos"
 importar { Trava, PacoteTravado, nomeArquivoTrava } de "./trava"
+importar { ClienteRegistro, ErroRegistro } de "./registro"
 
 classe ErroResolucao herda Excecao {
     construtor(mensagem: texto) {
@@ -46,14 +47,18 @@ classe ListaVersoes {
     }
 }
 
-// Dados do registro usados na resolução. Esta versão guarda os pacotes em memória
-// (adicionarVersao); o cliente da pacoteca-api preencherá a mesma estrutura.
+// Dados do registro usados na resolução: da pacoteca-api (fonteDoRegistro) ou guardados
+// em memória (adicionarVersao, para testes). Erros do registro viram ErroFonte.
 classe Fonte {
-    // nome → ListaVersoes
+    // nome → ListaVersoes, quando em memória
     pacotes: dicionário
+    registro: ClienteRegistro
+    usaRegistro: lógico
 
     construtor() {
         isto.pacotes = {}
+        isto.registro = ClienteRegistro("", "")
+        isto.usaRegistro = falso
     }
 
     adicionarVersao(nome: texto, versao: VersaoRegistro) {
@@ -65,6 +70,13 @@ classe Fonte {
     }
 
     buscarPacote(nome: texto): PacoteRegistro {
+        se isto.usaRegistro {
+            tente {
+                retorna isto.registro.buscarPacote(nome)
+            } pegue (erro: ErroRegistro) {
+                falhar ErroFonte(erro.mensagem)
+            }
+        }
         se nao isto.pacotes.contem(nome) {
             falhar ErroFonte("não encontrado")
         }
@@ -72,6 +84,19 @@ classe Fonte {
     }
 
     listarVersoes(nome: texto): ListaVersoes {
+        se isto.usaRegistro {
+            var lista = ListaVersoes()
+            tente {
+                var versoes: VersaoRegistro[] = isto.registro.listarVersoes(nome)
+                para cada versao em versoes {
+                    lista.itens.adicionar(versao)
+                }
+            } pegue (erro: ErroRegistro) {
+                falhar ErroFonte(erro.mensagem)
+            }
+            lista.consultas = 1
+            retorna lista
+        }
         se nao isto.pacotes.contem(nome) {
             falhar ErroFonte("não encontrado")
         }
@@ -80,7 +105,7 @@ classe Fonte {
         retorna lista
     }
 
-    // Quantas vezes as versões do pacote foram listadas.
+    // Quantas vezes as versões do pacote foram listadas (só em memória).
     consultas(nome: texto): inteiro {
         var total: inteiro = 0
         se isto.pacotes.contem(nome) {
@@ -89,6 +114,14 @@ classe Fonte {
         }
         retorna total
     }
+}
+
+// Fonte que consulta a pacoteca-api.
+funcao fonteDoRegistro(registro: ClienteRegistro): Fonte {
+    var fonte = Fonte()
+    fonte.registro = registro
+    fonte.usaRegistro = verdadeiro
+    retorna fonte
 }
 
 // Pacote com a versão escolhida.
