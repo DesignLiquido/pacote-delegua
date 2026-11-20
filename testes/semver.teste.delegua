@@ -1,0 +1,50 @@
+// Porte de interno/semver/semver_test.go do pacote-go.
+importar { Verificador } de "./verificador"
+importar { analisarVersao, compararVersoes, textoVersao, ErroVersaoInvalida } de "../fontes/semver"
+
+var v = Verificador("semver")
+
+funcao versaoValida(entrada: texto): lógico {
+    tente {
+        analisarVersao(entrada)
+    } pegue (erro: ErroVersaoInvalida) {
+        retorna falso
+    }
+    retorna verdadeiro
+}
+
+// Válidas
+var validas: texto[] = ["0.0.0", "1.2.3", "10.20.30", "1.0.0-alfa", "1.0.0-alfa.1", "1.0.0-0.3.7", "1.0.0+20260101", "1.0.0-beta+exp.sha.5114f85"]
+para cada entrada em validas {
+    v.verificar(versaoValida(entrada), "\"" + entrada + "\" deveria ser válida")
+}
+
+// Inválidas
+var invalidas: texto[] = ["", "1", "1.2", "v1.2.3", "01.2.3", "1.02.3", "1.2.3-", "1.2.3-01", "1.2.3.4", "a.b.c", " 1.2.3"]
+para cada entrada em invalidas {
+    v.verificar(nao versaoValida(entrada), "\"" + entrada + "\" deveria ser inválida")
+}
+
+// Comparar: ordem crescente do exemplo da especificação semver §11.
+var ordem: texto[] = ["1.0.0-alpha", "1.0.0-alpha.1", "1.0.0-alpha.beta", "1.0.0-beta", "1.0.0-beta.2", "1.0.0-beta.11", "1.0.0-rc.1", "1.0.0", "1.0.1", "1.1.0", "2.0.0", "10.0.0"]
+para (var i = 0; i < ordem.tamanho(); i = i + 1) {
+    para (var j = 0; j < ordem.tamanho(); j = j + 1) {
+        var esperado = 0
+        se i < j {
+            esperado = -1
+        }
+        se i > j {
+            esperado = 1
+        }
+        var obtido = compararVersoes(analisarVersao(ordem[i]), analisarVersao(ordem[j]))
+        v.verificar(obtido == esperado, "comparar(" + ordem[i] + ", " + ordem[j] + ") = " + texto(obtido) + ", esperado " + texto(esperado))
+    }
+}
+
+// Metadados não afetam a precedência.
+v.verificar(compararVersoes(analisarVersao("1.0.0+a"), analisarVersao("1.0.0+b")) == 0, "metadados não devem afetar a precedência")
+
+// Texto da versão (sem metadados).
+v.igual(textoVersao(analisarVersao("1.2.3-beta.2+exp")), "1.2.3-beta.2", "textoVersao")
+
+v.finalizar()

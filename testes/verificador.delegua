@@ -1,0 +1,48 @@
+// Auxiliar dos testes: conta verificações e falhas; finalizar() encerra com código 1 se
+// alguma falhou. (Funções não enxergam variáveis do nível superior, por isso o estado fica
+// num objeto.)
+
+classe Verificador {
+    nome: texto
+    total: inteiro
+    falhas: inteiro
+
+    construtor(nome: texto) {
+        isto.nome = nome
+        isto.total = 0
+        isto.falhas = 0
+    }
+
+    verificar(condicao: lógico, descricao: texto) {
+        isto.total = isto.total + 1
+        se nao condicao {
+            isto.falhas = isto.falhas + 1
+            escreva("  FALHOU: " + descricao)
+        }
+    }
+
+    igual(obtido: texto, esperado: texto, descricao: texto) {
+        isto.total = isto.total + 1
+        se obtido != esperado {
+            isto.falhas = isto.falhas + 1
+            escreva("  FALHOU: " + descricao + "\n    obtido:   " + obtido + "\n    esperado: " + esperado)
+        }
+    }
+
+    contem(valor: texto, trecho: texto, descricao: texto) {
+        isto.total = isto.total + 1
+        se nao valor.inclui(trecho) {
+            isto.falhas = isto.falhas + 1
+            escreva("  FALHOU: " + descricao + "\n    \"" + trecho + "\" não aparece em: " + valor)
+        }
+    }
+
+    finalizar() {
+        var processo = importar("processo")
+        se isto.falhas > 0 {
+            escreva(isto.nome + ": " + texto(isto.falhas) + " de " + texto(isto.total) + " verificações falharam")
+            processo.sair(1)
+        }
+        escreva(isto.nome + ": " + texto(isto.total) + " verificações passaram")
+    }
+}

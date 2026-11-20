@@ -1,0 +1,40 @@
+# pacote-delegua
+
+Reimplementação em Delégua do [pacote-go](https://github.com/DesignLiquido/pacote-go), a ferramenta de linha de comando da Pacoteca, compilada com o [delegua-llvm](https://github.com/DesignLiquido/delegua-llvm).
+
+## Situação
+
+Esta primeira etapa traz as partes de lógica pura, portadas dos pacotes `interno/*` do pacote-go, com os testes em Go como especificação:
+
+| Arquivo | Origem no pacote-go | Conteúdo |
+| --- | --- | --- |
+| `fontes/semver.delegua` | `interno/semver/semver.go` | Versões semânticas: análise, comparação e texto |
+| `fontes/restricao.delegua` | `interno/semver/restricao.go` | Restrições no estilo do npm (`^1.2`, `~1`, `>=1 <2`, `1.x`, `\|\|`) |
+| `fontes/jsonc.delegua` | `interno/jsonc/analisador.go` | JSON com comentários, mais leitura tolerante de campos |
+| `fontes/modelos.delegua` | `interno/modelos/pacoteca.go` | `pacoteca.jsonc` e respostas da pacoteca-api |
+| `fontes/trava.delegua` | `interno/trava/trava.go` | Leitura e gravação do `pacoteca.lock`, no mesmo formato do Go |
+| `fontes/resolvedor.delegua` | `interno/resolvedor/resolvedor.go` | Resolução de dependências transitivas |
+
+Ainda faltam o cliente da pacoteca-api, a parte de git e os comandos da linha de comando.
+
+## Diferenças em relação ao pacote-go
+
+- MAIOR, MENOR e CORRECAO são `inteiro` e aceitam até 9 dígitos (o Go usa inteiros de 64 bits).
+- Campos opcionais (ponteiros no Go) usam `""` para ausente ou nulo.
+- No `pacoteca.lock`, uma lista de realizações vazia é gravada como `[]` (o Go grava `null` para lista nula). Fora isso, a serialização é idêntica à do Go, byte a byte.
+- `Fonte` (resolvedor) é uma classe concreta que guarda os pacotes em memória; o cliente da pacoteca-api preencherá a mesma estrutura.
+- Os campos JSON `tipo` de símbolos e argumentos viram `categoria` e `tipoDado`, porque `tipo` é palavra reservada.
+
+## Testes
+
+```sh
+testes/executar.sh
+```
+
+O script compila e executa cada `testes/*.teste.delegua`. A variável `ILC` escolhe o compilador; o padrão é o `ilc` instalado. Para usar um delegua-llvm local:
+
+```sh
+ILC="npx ts-node /caminho/delegua-llvm/fontes/ilc.ts" testes/executar.sh
+```
+
+O porte depende de correções no delegua-llvm que ainda não foram publicadas no npm.

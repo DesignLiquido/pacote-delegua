@@ -1,0 +1,228 @@
+// Versões semânticas (https://semver.org) no formato
+// MAIOR.MENOR.CORRECAO[-pre.lancamento][+metadados].
+//
+// Porte de interno/semver/semver.go do pacote-go. Diferença: MAIOR, MENOR e CORRECAO
+// são `inteiro` e aceitam até 9 dígitos (o pacote-go usa inteiros de 64 bits).
+
+classe ErroVersaoInvalida herda Excecao {
+    construtor(mensagem: texto) {
+        super.construtor(mensagem)
+    }
+}
+
+classe Versao {
+    maior: inteiro
+    menor: inteiro
+    correcao: inteiro
+    preLancamento: texto[]
+
+    construtor(maior: inteiro, menor: inteiro, correcao: inteiro) {
+        isto.maior = maior
+        isto.menor = menor
+        isto.correcao = correcao
+        isto.preLancamento = []
+    }
+}
+
+// Máximo de dígitos de um componente numérico (cabe em `inteiro`).
+funcao maximoDigitos(): inteiro {
+    retorna 9
+}
+
+funcao ehDigitos(valor: texto): lógico {
+    se valor.tamanho() == 0 {
+        retorna falso
+    }
+    para (var i = 0; i < valor.tamanho(); i = i + 1) {
+        se nao "0123456789".inclui(valor[i]) {
+            retorna falso
+        }
+    }
+    retorna verdadeiro
+}
+
+// [0-9A-Za-z-]+
+funcao ehIdentificadorSemver(valor: texto): lógico {
+    se valor.tamanho() == 0 {
+        retorna falso
+    }
+    var permitidos = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz-"
+    para (var i = 0; i < valor.tamanho(); i = i + 1) {
+        se nao permitidos.inclui(valor[i]) {
+            retorna falso
+        }
+    }
+    retorna verdadeiro
+}
+
+// 0 ou [1-9][0-9]*
+funcao ehNumeroSemZeroAEsquerda(valor: texto): lógico {
+    se nao ehDigitos(valor) {
+        retorna falso
+    }
+    se valor == "0" {
+        retorna verdadeiro
+    }
+    var primeiro: texto = valor[0]
+    retorna primeiro != "0"
+}
+
+funcao erroVersao(entrada: texto, detalhe: texto): ErroVersaoInvalida {
+    retorna ErroVersaoInvalida("versão semântica inválida: \"" + entrada + "\" (" + detalhe + ")")
+}
+
+// Converte um texto como "1.2.3" ou "1.2.3-beta.1" em Versao.
+funcao analisarVersao(entrada: texto): Versao {
+    // Metadados (+...): validados e descartados.
+    var semMetadados = entrada
+    var posicaoMais = entrada.encontrar("+")
+    se posicaoMais >= 0 {
+        var metadados = entrada.subtexto(posicaoMais + 1, entrada.tamanho())
+        var identificadoresMetadados = metadados.dividir(".")
+        para cada identificador em identificadoresMetadados {
+            se nao ehIdentificadorSemver(identificador) {
+                falhar erroVersao(entrada, "metadados inválidos")
+            }
+        }
+        semMetadados = entrada.subtexto(0, posicaoMais)
+    }
+
+    var nucleo = semMetadados
+    var temPreLancamento = falso
+    var preLancamento = ""
+    var posicaoMenos = semMetadados.encontrar("-")
+    se posicaoMenos >= 0 {
+        nucleo = semMetadados.subtexto(0, posicaoMenos)
+        preLancamento = semMetadados.subtexto(posicaoMenos + 1, semMetadados.tamanho())
+        temPreLancamento = verdadeiro
+    }
+
+    var partes = nucleo.dividir(".")
+    se partes.tamanho() != 3 {
+        falhar erroVersao(entrada, "esperado: MAIOR.MENOR.CORRECAO")
+    }
+    para cada parte em partes {
+        se nao ehNumeroSemZeroAEsquerda(parte) {
+            falhar erroVersao(entrada, "esperado: MAIOR.MENOR.CORRECAO")
+        }
+        se parte.tamanho() > maximoDigitos() {
+            falhar erroVersao(entrada, "número grande demais")
+        }
+    }
+
+    var versao = Versao(inteiro(partes[0]), inteiro(partes[1]), inteiro(partes[2]))
+    se temPreLancamento {
+        var identificadores = preLancamento.dividir(".")
+        para cada identificador em identificadores {
+            // Numérico sem zero à esquerda, ou alfanumérico com pelo menos uma letra ou hífen.
+            se nao ehIdentificadorSemver(identificador) {
+                falhar erroVersao(entrada, "pré-lançamento inválido")
+            }
+            se ehDigitos(identificador) e nao ehNumeroSemZeroAEsquerda(identificador) {
+                falhar erroVersao(entrada, "pré-lançamento numérico com zero à esquerda")
+            }
+            versao.preLancamento.adicionar(identificador)
+        }
+    }
+    retorna versao
+}
+
+// Compara dois números sem zero à esquerda escritos como texto, de qualquer tamanho.
+funcao compararNumerosTexto(a: texto, b: texto): inteiro {
+    se a.tamanho() != b.tamanho() {
+        se a.tamanho() < b.tamanho() {
+            retorna -1
+        }
+        retorna 1
+    }
+    se a == b {
+        retorna 0
+    }
+    se a < b {
+        retorna -1
+    }
+    retorna 1
+}
+
+funcao compararIdentificadores(a: texto, b: texto): inteiro {
+    var numericoA: lógico = ehDigitos(a)
+    var numericoB: lógico = ehDigitos(b)
+    se numericoA e numericoB {
+        retorna compararNumerosTexto(a, b)
+    }
+    // Identificadores numéricos têm precedência menor que os alfanuméricos.
+    se numericoA {
+        retorna -1
+    }
+    se numericoB {
+        retorna 1
+    }
+    se a == b {
+        retorna 0
+    }
+    se a < b {
+        retorna -1
+    }
+    retorna 1
+}
+
+funcao compararInteiros(a: inteiro, b: inteiro): inteiro {
+    se a < b {
+        retorna -1
+    }
+    se a > b {
+        retorna 1
+    }
+    retorna 0
+}
+
+// Precedência entre listas de pré-lançamento. Sem pré-lançamento tem precedência
+// sobre com pré-lançamento.
+//
+// (O avaliador sintático infere os literais de retorno como `número` e uma variável
+// `inteiro` como `inteiro`, e rejeita a mistura; por isso os retornos aqui são só literais
+// e chamadas.)
+funcao compararPreLancamento(preA: texto[], preB: texto[]): inteiro {
+    se preA.tamanho() == 0 e preB.tamanho() == 0 {
+        retorna 0
+    }
+    se preA.tamanho() == 0 {
+        retorna 1
+    }
+    se preB.tamanho() == 0 {
+        retorna -1
+    }
+    var i = 0
+    enquanto i < preA.tamanho() e i < preB.tamanho() {
+        var resultado: inteiro = compararIdentificadores(preA[i], preB[i])
+        se resultado != 0 {
+            retorna compararInteiros(resultado, 0)
+        }
+        i = i + 1
+    }
+    retorna compararInteiros(preA.tamanho(), preB.tamanho())
+}
+
+// -1, 0 ou 1 conforme a seja menor, igual ou maior que b. Metadados não contam.
+funcao compararVersoes(a: Versao, b: Versao): inteiro {
+    var resultado: inteiro = compararInteiros(a.maior, b.maior)
+    se resultado == 0 {
+        resultado = compararInteiros(a.menor, b.menor)
+    }
+    se resultado == 0 {
+        resultado = compararInteiros(a.correcao, b.correcao)
+    }
+    se resultado == 0 {
+        resultado = compararPreLancamento(a.preLancamento, b.preLancamento)
+    }
+    retorna resultado
+}
+
+funcao textoVersao(versao: Versao): texto {
+    var resultado = texto(versao.maior) + "." + texto(versao.menor) + "." + texto(versao.correcao)
+    var pre: texto[] = versao.preLancamento
+    se pre.tamanho() > 0 {
+        resultado = resultado + "-" + pre.juntar(".")
+    }
+    retorna resultado
+}

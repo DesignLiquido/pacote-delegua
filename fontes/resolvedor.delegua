@@ -1,0 +1,358 @@
+// Escolhe as versões de todos os pacotes necessários a um projeto, incluindo dependências
+// transitivas, a partir das restrições declaradas.
+//
+// Porte de interno/resolvedor/resolvedor.go do pacote-go.
+
+importar { Versao, analisarVersao, compararVersoes, ErroVersaoInvalida } de "./semver"
+importar { Restricao, analisarRestricao, ErroRestricaoInvalida } de "./restricao"
+importar { PacoteRegistro, VersaoRegistro } de "./modelos"
+importar { Trava, PacoteTravado, nomeArquivoTrava } de "./trava"
+
+classe ErroResolucao herda Excecao {
+    construtor(mensagem: texto) {
+        super.construtor(mensagem)
+    }
+}
+
+// Dois pacotes exigem versões incompatíveis de uma mesma dependência.
+classe ErroConflito herda Excecao {
+    nome: texto
+    escolhida: texto
+    exigencias: texto[]
+
+    construtor(nome: texto, escolhida: texto, exigencias: texto[]) {
+        super.construtor("conflito de versões para '" + nome + "': a versão " + escolhida + " foi escolhida, mas nem todas as exigências são atendidas:\n  " + exigencias.juntar("\n  ") + "\nOs pacotes Delégua são instalados em um único diretório por nome (pacotes/<realizacao>/" + nome + "), então todas as restrições precisam aceitar a mesma versão.")
+        isto.nome = nome
+        isto.escolhida = escolhida
+        isto.exigencias = exigencias
+    }
+}
+
+// Pacote ausente na fonte.
+classe ErroFonte herda Excecao {
+    construtor(mensagem: texto) {
+        super.construtor(mensagem)
+    }
+}
+
+// Versões de um pacote na fonte, e quantas vezes foram consultadas.
+classe ListaVersoes {
+    itens: VersaoRegistro[]
+    consultas: inteiro
+
+    construtor() {
+        isto.itens = []
+        isto.consultas = 0
+    }
+}
+
+// Dados do registro usados na resolução. Esta versão guarda os pacotes em memória
+// (adicionarVersao); o cliente da pacoteca-api preencherá a mesma estrutura.
+classe Fonte {
+    // nome → ListaVersoes
+    pacotes: dicionário
+
+    construtor() {
+        isto.pacotes = {}
+    }
+
+    adicionarVersao(nome: texto, versao: VersaoRegistro) {
+        se nao isto.pacotes.contem(nome) {
+            isto.pacotes[nome] = ListaVersoes()
+        }
+        var lista: ListaVersoes = isto.pacotes[nome]
+        lista.itens.adicionar(versao)
+    }
+
+    buscarPacote(nome: texto): PacoteRegistro {
+        se nao isto.pacotes.contem(nome) {
+            falhar ErroFonte("não encontrado")
+        }
+        retorna PacoteRegistro(nome, "https://github.com/org/" + nome)
+    }
+
+    listarVersoes(nome: texto): ListaVersoes {
+        se nao isto.pacotes.contem(nome) {
+            falhar ErroFonte("não encontrado")
+        }
+        var lista: ListaVersoes = isto.pacotes[nome]
+        lista.consultas = lista.consultas + 1
+        retorna lista
+    }
+
+    // Quantas vezes as versões do pacote foram listadas.
+    consultas(nome: texto): inteiro {
+        var total: inteiro = 0
+        se isto.pacotes.contem(nome) {
+            var lista: ListaVersoes = isto.pacotes[nome]
+            total = lista.consultas
+        }
+        retorna total
+    }
+}
+
+// Pacote com a versão escolhida.
+classe Resolvido {
+    nome: texto
+    pacote: PacoteTravado
+    nivelVerificacao: texto
+    // Quem exigiu o pacote e com qual restrição, para mensagens de erro.
+    requeridoPor: texto[]
+
+    construtor(nome: texto, pacote: PacoteTravado, nivelVerificacao: texto) {
+        isto.nome = nome
+        isto.pacote = pacote
+        isto.nivelVerificacao = nivelVerificacao
+        isto.requeridoPor = []
+    }
+}
+
+// Pacotes resolvidos, por nome.
+classe Resultado {
+    // nome → Resolvido
+    resolvidos: dicionário
+
+    construtor() {
+        isto.resolvidos = {}
+    }
+
+    contem(nome: texto): lógico {
+        retorna isto.resolvidos.contem(nome)
+    }
+
+    obter(nome: texto): Resolvido {
+        var resolvido: Resolvido = isto.resolvidos[nome]
+        retorna resolvido
+    }
+
+    // Nomes resolvidos em ordem alfabética.
+    nomes(): texto[] {
+        var chaves: texto[] = isto.resolvidos.chaves()
+        var ordenados: texto[] = chaves.ordenar()
+        retorna ordenados
+    }
+
+    // Converte o resultado em um pacoteca.lock.
+    paraTrava(): Trava {
+        var trava = Trava()
+        var nomes: texto[] = isto.nomes()
+        para cada nome em nomes {
+            var resolvido: Resolvido = isto.resolvidos[nome]
+            trava.definir(nome, resolvido.pacote)
+        }
+        retorna trava
+    }
+}
+
+classe Pendente {
+    nome: texto
+    restricao: texto
+    requerente: texto
+
+    construtor(nome: texto, restricao: texto, requerente: texto) {
+        isto.nome = nome
+        isto.restricao = restricao
+        isto.requerente = requerente
+    }
+}
+
+funcao nomesOrdenados(mapa: dicionário): texto[] {
+    var chaves: texto[] = mapa.chaves()
+    var ordenados: texto[] = chaves.ordenar()
+    retorna ordenados
+}
+
+funcao textoRestricao(restricao: texto): texto {
+    se restricao.aparar() == "" {
+        retorna "*"
+    }
+    retorna restricao
+}
+
+funcao abreviar(hash: texto): texto {
+    se hash.tamanho() > 12 {
+        retorna hash.subtexto(0, 12)
+    }
+    retorna hash
+}
+
+funcao listarPublicadas(versoes: VersaoRegistro[]): texto {
+    var textos: texto[] = []
+    para cada versao em versoes {
+        se versao.publicada() {
+            textos.adicionar(versao.versao)
+        }
+    }
+    retorna textos.juntar(", ")
+}
+
+funcao versaoSatisfaz(restricao: Restricao, versao: texto): lógico {
+    tente {
+        retorna restricao.satisfaz(analisarVersao(versao))
+    } pegue (erro: ErroVersaoInvalida) {
+        retorna falso
+    }
+    retorna falso
+}
+
+// A maior versão publicada que atende à restrição, preferindo a fixada no pacoteca.lock.
+// Versões suspensas nunca são escolhidas.
+funcao escolherVersao(nome: texto, lista: ListaVersoes, restricao: Restricao, travado: Trava): VersaoRegistro {
+    var versoes: VersaoRegistro[] = lista.itens
+    var candidatas: VersaoRegistro[] = []
+    var publicadas = 0
+    var suspensas = 0
+    para cada versao em versoes {
+        se versao.publicada() {
+            publicadas = publicadas + 1
+            se versaoSatisfaz(restricao, versao.versao) {
+                se versao.nivelVerificacao == "suspenso" {
+                    suspensas = suspensas + 1
+                } senao {
+                    candidatas.adicionar(versao)
+                }
+            }
+        }
+    }
+
+    // Uma versão fixada no pacoteca.lock deve continuar com o mesmo commit no registro.
+    var versaoTravada = ""
+    se travado.contem(nome) {
+        var travada: PacoteTravado = travado.obter(nome)
+        versaoTravada = travada.versao
+        para cada versao em versoes {
+            se versao.versao == travada.versao e versao.publicada() e versao.hashCommit != travada.hashCommit {
+                falhar ErroResolucao("a versão " + travada.versao + " de '" + nome + "' está fixada no commit " + abreviar(travada.hashCommit) + " no " + nomeArquivoTrava() + ", mas o registro informa o commit " + abreviar(versao.hashCommit) + "; versões publicadas são imutáveis, então isso pode indicar adulteração. Verifique antes de remover a entrada do " + nomeArquivoTrava())
+            }
+        }
+    }
+
+    se candidatas.tamanho() == 0 {
+        se publicadas == 0 {
+            falhar ErroResolucao("'" + nome + "' não tem versões publicadas (publique com uma tag: POST /pacotes/" + nome + "/versoes)")
+        }
+        se suspensas > 0 {
+            falhar ErroResolucao("todas as versões de '" + nome + "' que atendem a " + textoRestricao(restricao.original) + " estão suspensas")
+        }
+        falhar ErroResolucao("nenhuma versão publicada de '" + nome + "' atende a " + textoRestricao(restricao.original) + " (disponíveis: " + listarPublicadas(versoes) + ")")
+    }
+
+    para cada candidata em candidatas {
+        se versaoTravada != "" e candidata.versao == versaoTravada {
+            retorna candidata
+        }
+    }
+
+    var melhor: VersaoRegistro = candidatas[0]
+    var versaoMelhor: Versao = analisarVersao(melhor.versao)
+    para cada candidata em candidatas {
+        var versaoCandidata: Versao = analisarVersao(candidata.versao)
+        se compararVersoes(versaoCandidata, versaoMelhor) > 0 {
+            melhor = candidata
+            versaoMelhor = versaoCandidata
+        }
+    }
+    retorna melhor
+}
+
+funcao pacoteTravadoDe(escolhida: VersaoRegistro, pacote: PacoteRegistro): PacoteTravado {
+    var travado = PacoteTravado(escolhida.versao, escolhida.hashCommit)
+    travado.urlRepositorio = pacote.urlRepositorio
+    travado.tag = escolhida.tagGitHub
+    var realizacoes: texto[] = escolhida.realizacoes
+    para cada realizacao em realizacoes {
+        travado.realizacoes.adicionar(realizacao)
+    }
+    travado.pontoDeEntrada = escolhida.pontoDeEntrada
+    travado.pacoteNpm = escolhida.pacoteNpm
+    var dependencias: texto[] = nomesOrdenados(escolhida.dependencias)
+    para cada dependencia em dependencias {
+        var restricao: texto = escolhida.dependencias[dependencia]
+        travado.dependencias[dependencia] = restricao
+    }
+    retorna travado
+}
+
+// Escolhe uma versão para cada pacote alcançável a partir das dependências raiz
+// (nome → restrição).
+//
+// Para cada pacote, escolhe a maior versão publicada que atende à restrição, preferindo a
+// versão fixada em `travado` (o pacoteca.lock) quando ela ainda atende. Como cada pacote é
+// instalado em um único diretório, uma restrição posterior que não aceite a versão já
+// escolhida resulta em ErroConflito.
+//
+// Se `travado` fixa uma versão cujo commit difere do commit publicado no registro, a
+// resolução falha: versões publicadas são imutáveis, então isso indica adulteração.
+funcao resolver(fonte: Fonte, raiz: dicionário, travado: Trava): Resultado {
+    var resultado = Resultado()
+    // nome → PacoteRegistro / ListaVersoes
+    var cachePacotes: dicionário = {}
+    var cacheVersoes: dicionário = {}
+
+    var fila: Pendente[] = []
+    var nomesRaiz: texto[] = nomesOrdenados(raiz)
+    para cada nome em nomesRaiz {
+        var restricaoRaiz: texto = raiz[nome]
+        fila.adicionar(Pendente(nome, restricaoRaiz, "pacoteca.jsonc"))
+    }
+
+    var posicao = 0
+    enquanto posicao < fila.tamanho() {
+        var atual: Pendente = fila[posicao]
+        posicao = posicao + 1
+
+        var restricao = Restricao("")
+        tente {
+            restricao = analisarRestricao(atual.restricao)
+        } pegue (erro: ErroRestricaoInvalida) {
+            falhar ErroResolucao(atual.requerente + " exige '" + atual.nome + "': " + erro.mensagem)
+        }
+        var exigencia = atual.requerente + " exige " + atual.nome + " " + textoRestricao(atual.restricao)
+
+        se resultado.contem(atual.nome) {
+            var escolhido: Resolvido = resultado.obter(atual.nome)
+            escolhido.requeridoPor.adicionar(exigencia)
+            var versaoEscolhida: texto = escolhido.pacote.versao
+            se nao versaoSatisfaz(restricao, versaoEscolhida) {
+                falhar ErroConflito(atual.nome, versaoEscolhida, escolhido.requeridoPor)
+            }
+        } senao {
+            se nao cachePacotes.contem(atual.nome) {
+                tente {
+                    cachePacotes[atual.nome] = fonte.buscarPacote(atual.nome)
+                } pegue (erro: ErroFonte) {
+                    falhar ErroResolucao("pacote '" + atual.nome + "' (" + exigencia + ") não encontrado no registro: " + erro.mensagem)
+                }
+            }
+            var pacote: PacoteRegistro = cachePacotes[atual.nome]
+
+            se nao cacheVersoes.contem(atual.nome) {
+                tente {
+                    cacheVersoes[atual.nome] = fonte.listarVersoes(atual.nome)
+                } pegue (erro: ErroFonte) {
+                    falhar ErroResolucao("erro ao listar versões de '" + atual.nome + "': " + erro.mensagem)
+                }
+            }
+            var versoes: ListaVersoes = cacheVersoes[atual.nome]
+
+            var escolhida = VersaoRegistro("")
+            tente {
+                escolhida = escolherVersao(atual.nome, versoes, restricao, travado)
+            } pegue (erro: ErroResolucao) {
+                falhar ErroResolucao(exigencia + ": " + erro.mensagem)
+            }
+
+            var resolvido = Resolvido(atual.nome, pacoteTravadoDe(escolhida, pacote), escolhida.nivelVerificacao)
+            resolvido.requeridoPor.adicionar(exigencia)
+            resultado.resolvidos[atual.nome] = resolvido
+
+            var dependencias: texto[] = nomesOrdenados(escolhida.dependencias)
+            para cada dependencia em dependencias {
+                var restricaoDependencia: texto = escolhida.dependencias[dependencia]
+                fila.adicionar(Pendente(dependencia, restricaoDependencia, atual.nome + "@" + escolhida.versao))
+            }
+        }
+    }
+
+    retorna resultado
+}

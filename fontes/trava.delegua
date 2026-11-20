@@ -1,0 +1,223 @@
+// O pacoteca.lock, que fixa a versão e o commit exatos de cada pacote instalado, incluindo
+// dependências transitivas.
+//
+// Porte de interno/trava/trava.go do pacote-go. A serialização reproduz a do
+// encoding/json do Go (indentação de 2 espaços, chaves de mapa em ordem alfabética, campos
+// omitempty e quebra de linha final). Diferença: lista de realizações vazia é gravada como
+// [] (o Go grava null para lista nula).
+
+importar { campoTexto, campoInteiro, lerListaTexto, lerDicionarioTexto } de "./jsonc"
+
+classe ErroTrava herda Excecao {
+    construtor(mensagem: texto) {
+        super.construtor(mensagem)
+    }
+}
+
+// Nome do arquivo de trava, gravado ao lado do pacoteca.jsonc.
+funcao nomeArquivoTrava(): texto {
+    retorna "pacoteca.lock"
+}
+
+// Versão do formato do arquivo de trava.
+funcao formatoAtualTrava(): inteiro {
+    retorna 1
+}
+
+// Pacote resolvido e fixado a um commit.
+classe PacoteTravado {
+    versao: texto
+    urlRepositorio: texto
+    tag: texto
+    hashCommit: texto
+    realizacoes: texto[]
+    pontoDeEntrada: texto
+    pacoteNpm: texto
+    // nome do pacote → restrição de versão
+    dependencias: dicionário
+
+    construtor(versao: texto, hashCommit: texto) {
+        isto.versao = versao
+        isto.urlRepositorio = ""
+        isto.tag = ""
+        isto.hashCommit = hashCommit
+        isto.realizacoes = []
+        isto.pontoDeEntrada = ""
+        isto.pacoteNpm = ""
+        isto.dependencias = {}
+    }
+}
+
+// Conteúdo do pacoteca.lock.
+classe Trava {
+    formato: inteiro
+    // nome do pacote → PacoteTravado
+    pacotes: dicionário
+
+    construtor() {
+        isto.formato = formatoAtualTrava()
+        isto.pacotes = {}
+    }
+
+    definir(nome: texto, pacote: PacoteTravado) {
+        isto.pacotes[nome] = pacote
+    }
+
+    contem(nome: texto): lógico {
+        retorna isto.pacotes.contem(nome)
+    }
+
+    // O pacote fixado com esse nome. Verifique com contem() antes.
+    obter(nome: texto): PacoteTravado {
+        var pacote: PacoteTravado = isto.pacotes[nome]
+        retorna pacote
+    }
+
+    // Nomes dos pacotes em ordem alfabética.
+    nomes(): texto[] {
+        var chaves: texto[] = isto.pacotes.chaves()
+        var ordenados: texto[] = chaves.ordenar()
+        retorna ordenados
+    }
+}
+
+// Texto JSON entre aspas, com os escapes do encoding/json do Go (sem escapar HTML).
+funcao textoJson(valor: texto): texto {
+    var resultado = valor.substituir("\\", "\\\\")
+    resultado = resultado.substituir("\"", "\\\"")
+    resultado = resultado.substituir("\n", "\\n")
+    resultado = resultado.substituir("\r", "\\r")
+    resultado = resultado.substituir("\t", "\\t")
+    retorna "\"" + resultado + "\""
+}
+
+funcao serializarListaTexto(lista: texto[], recuo: texto): texto {
+    se lista.tamanho() == 0 {
+        retorna "[]"
+    }
+    var itens: texto[] = []
+    para cada item em lista {
+        itens.adicionar(recuo + "  " + textoJson(item))
+    }
+    retorna "[\n" + itens.juntar(",\n") + "\n" + recuo + "]"
+}
+
+funcao serializarDicionarioTexto(mapa: dicionário, recuo: texto): texto {
+    var chaves: texto[] = mapa.chaves()
+    se chaves.tamanho() == 0 {
+        retorna "{}"
+    }
+    var ordenadas: texto[] = chaves.ordenar()
+    var itens: texto[] = []
+    para cada chave em ordenadas {
+        var valor: texto = mapa[chave]
+        itens.adicionar(recuo + "  " + textoJson(chave) + ": " + textoJson(valor))
+    }
+    retorna "{\n" + itens.juntar(",\n") + "\n" + recuo + "}"
+}
+
+funcao serializarPacoteTravado(pacote: PacoteTravado, recuo: texto): texto {
+    var dentro = recuo + "  "
+    var campos: texto[] = []
+    campos.adicionar(dentro + "\"versao\": " + textoJson(pacote.versao))
+    campos.adicionar(dentro + "\"urlRepositorio\": " + textoJson(pacote.urlRepositorio))
+    campos.adicionar(dentro + "\"tag\": " + textoJson(pacote.tag))
+    campos.adicionar(dentro + "\"hashCommit\": " + textoJson(pacote.hashCommit))
+    campos.adicionar(dentro + "\"realizacoes\": " + serializarListaTexto(pacote.realizacoes, dentro))
+    se pacote.pontoDeEntrada != "" {
+        campos.adicionar(dentro + "\"pontoDeEntrada\": " + textoJson(pacote.pontoDeEntrada))
+    }
+    se pacote.pacoteNpm != "" {
+        campos.adicionar(dentro + "\"pacoteNpm\": " + textoJson(pacote.pacoteNpm))
+    }
+    var chavesDependencias: texto[] = pacote.dependencias.chaves()
+    se chavesDependencias.tamanho() > 0 {
+        campos.adicionar(dentro + "\"dependencias\": " + serializarDicionarioTexto(pacote.dependencias, dentro))
+    }
+    retorna "{\n" + campos.juntar(",\n") + "\n" + recuo + "}"
+}
+
+// Conteúdo do arquivo, com chaves em ordem estável para diffs legíveis.
+funcao serializarTrava(trava: Trava): texto {
+    var pacotes = "{}"
+    var nomes: texto[] = trava.nomes()
+    se nomes.tamanho() > 0 {
+        var itens: texto[] = []
+        para cada nome em nomes {
+            itens.adicionar("    " + textoJson(nome) + ": " + serializarPacoteTravado(trava.obter(nome), "    "))
+        }
+        pacotes = "{\n" + itens.juntar(",\n") + "\n  }"
+    }
+    retorna "{\n  \"formato\": " + texto(trava.formato) + ",\n  \"pacotes\": " + pacotes + "\n}\n"
+}
+
+// Indica se duas travas fixam exatamente os mesmos pacotes.
+funcao travasIguais(a: Trava, b: Trava): lógico {
+    retorna serializarTrava(a) == serializarTrava(b)
+}
+
+funcao pacoteTravadoDeJson(objeto: texto): PacoteTravado {
+    var pacote = PacoteTravado(campoTexto(objeto, "versao"), campoTexto(objeto, "hashCommit"))
+    pacote.urlRepositorio = campoTexto(objeto, "urlRepositorio")
+    pacote.tag = campoTexto(objeto, "tag")
+    lerListaTexto(objeto, "realizacoes", pacote.realizacoes)
+    pacote.pontoDeEntrada = campoTexto(objeto, "pontoDeEntrada")
+    pacote.pacoteNpm = campoTexto(objeto, "pacoteNpm")
+    lerDicionarioTexto(objeto, "dependencias", pacote.dependencias)
+    retorna pacote
+}
+
+// Interpreta o conteúdo de um pacoteca.lock; `caminho` só aparece nas mensagens de erro.
+funcao analisarTrava(conteudo: texto, caminho: texto): Trava {
+    var json = importar("json")
+    var objeto = json.textoParaJson(conteudo)
+    se objeto == nulo {
+        falhar ErroTrava("erro ao analisar " + caminho + ": JSON inválido")
+    }
+    se json.tipo(objeto) != "objeto" {
+        falhar ErroTrava("erro ao analisar " + caminho + ": esperado um objeto JSON")
+    }
+
+    var formato: inteiro = campoInteiro(objeto, "formato")
+    se formato != formatoAtualTrava() {
+        falhar ErroTrava(caminho + " usa o formato " + texto(formato) + ", mas esta versão do pacote entende apenas o formato " + texto(formatoAtualTrava()))
+    }
+
+    var trava = Trava()
+    se json.contemCampo(objeto, "pacotes") {
+        var pacotes = json.obterCampo(objeto, "pacotes")
+        se json.tipo(pacotes) == "objeto" {
+            var nomes: texto[] = json.chaves(pacotes)
+            para cada nome em nomes {
+                trava.definir(nome, pacoteTravadoDeJson(json.obterCampo(pacotes, nome)))
+            }
+        }
+    }
+    retorna trava
+}
+
+// Carrega o arquivo de trava. Se ele não existir, devolve uma trava vazia.
+funcao lerTrava(caminho: texto): Trava {
+    var arquivos = importar("arquivos")
+    se nao arquivos.existe(caminho) {
+        retorna Trava()
+    }
+    var conteudo = arquivos.lerTexto(caminho)
+    se conteudo == nulo {
+        falhar ErroTrava("erro ao ler " + caminho)
+    }
+    retorna analisarTrava(conteudo, caminho)
+}
+
+// Grava o arquivo de trava de forma atômica (arquivo temporário + renomear).
+funcao gravarTrava(trava: Trava, caminho: texto) {
+    var arquivos = importar("arquivos")
+    var temporario = caminho + ".tmp"
+    se nao arquivos.escreverTexto(temporario, serializarTrava(trava)) {
+        falhar ErroTrava("erro ao gravar " + caminho)
+    }
+    se nao arquivos.renomear(temporario, caminho) {
+        arquivos.remover(temporario)
+        falhar ErroTrava("erro ao gravar " + caminho)
+    }
+}

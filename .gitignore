@@ -1,0 +1,11 @@
+# Saídas do compilador
+*.exe
+*.exp
+*.lib
+*.ll
+*.o
+*.obj
+testes/*.teste
+
+# Temporários dos testes
+testes/tmp-*/

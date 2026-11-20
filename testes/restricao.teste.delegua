@@ -1,0 +1,87 @@
+// Porte de interno/semver/restricao_test.go do pacote-go.
+importar { Verificador } de "./verificador"
+importar { analisarVersao } de "../fontes/semver"
+importar { analisarRestricao, ErroRestricaoInvalida } de "../fontes/restricao"
+
+classe Exemplo {
+    restricao: texto
+    aceita: texto[]
+    recusa: texto[]
+
+    construtor(restricao: texto, aceita: texto[], recusa: texto[]) {
+        isto.restricao = restricao
+        isto.aceita = aceita
+        isto.recusa = recusa
+    }
+}
+
+funcao verificarCaso(v: Verificador, exemplo: Exemplo) {
+    var restricao = analisarRestricao(exemplo.restricao)
+    var aceita: texto[] = exemplo.aceita
+    para cada versao em aceita {
+        v.verificar(restricao.satisfaz(analisarVersao(versao)), "\"" + exemplo.restricao + "\" deveria aceitar " + versao)
+    }
+    var recusa: texto[] = exemplo.recusa
+    para cada versao em recusa {
+        v.verificar(nao restricao.satisfaz(analisarVersao(versao)), "\"" + exemplo.restricao + "\" deveria recusar " + versao)
+    }
+}
+
+funcao restricaoValida(entrada: texto): lógico {
+    tente {
+        analisarRestricao(entrada)
+    } pegue (erro: ErroRestricaoInvalida) {
+        retorna falso
+    }
+    retorna verdadeiro
+}
+
+var v = Verificador("restricao")
+var nenhuma: texto[] = []
+
+var exemplos: Exemplo[] = [
+    Exemplo("1.2.3", ["1.2.3"], ["1.2.4", "1.2.2", "1.2.3-beta"]),
+    Exemplo("=1.2.3", ["1.2.3"], ["1.2.4"]),
+    Exemplo("^1.2.3", ["1.2.3", "1.9.9", "1.2.10"], ["1.2.2", "2.0.0", "2.0.0-alfa", "1.3.0-beta"]),
+    Exemplo("^0.2.3", ["0.2.3", "0.2.9"], ["0.3.0", "0.2.2", "1.0.0"]),
+    Exemplo("^0.0.3", ["0.0.3"], ["0.0.4", "0.0.2"]),
+    Exemplo("^1.2", ["1.2.0", "1.9.0"], ["1.1.9", "2.0.0"]),
+    Exemplo("^0.0", ["0.0.0", "0.0.9"], ["0.1.0"]),
+    Exemplo("^1", ["1.0.0", "1.99.0"], ["2.0.0", "0.9.0"]),
+    Exemplo("~1.2.3", ["1.2.3", "1.2.9"], ["1.3.0", "1.2.2"]),
+    Exemplo("~1.2", ["1.2.0", "1.2.9"], ["1.3.0"]),
+    Exemplo("~1", ["1.0.0", "1.9.0"], ["2.0.0"]),
+    Exemplo("1.x", ["1.0.0", "1.9.9"], ["2.0.0", "0.9.0"]),
+    Exemplo("1.2.x", ["1.2.0", "1.2.9"], ["1.3.0"]),
+    Exemplo("1.2", ["1.2.0", "1.2.9"], ["1.3.0"]),
+    Exemplo("*", ["0.0.1", "99.0.0"], ["1.0.0-beta"]),
+    Exemplo("", ["1.0.0"], nenhuma),
+    Exemplo(">=1.0.0 <2.0.0", ["1.0.0", "1.5.0"], ["2.0.0", "0.9.9"]),
+    Exemplo(">= 1.0.0 < 2.0.0", ["1.5.0"], ["2.0.0"]),
+    Exemplo(">1.2", ["1.3.0", "2.0.0"], ["1.2.9", "1.2.0"]),
+    Exemplo(">1.2.3", ["1.2.4"], ["1.2.3"]),
+    Exemplo("<1.2", ["1.1.9"], ["1.2.0"]),
+    Exemplo("<=1.2", ["1.2.9"], ["1.3.0"]),
+    Exemplo("<=1.2.3", ["1.2.3"], ["1.2.4"]),
+    Exemplo("^1.0.0 || ^3.0.0", ["1.5.0", "3.1.0"], ["2.0.0", "4.0.0"]),
+    Exemplo("^1.2.3-beta.2", ["1.2.3-beta.2", "1.2.3-beta.10", "1.2.3", "1.5.0"], ["1.2.3-beta.1", "1.2.4-beta", "2.0.0"]),
+    Exemplo("v1.2.3", ["1.2.3"], nenhuma)
+]
+para cada exemplo em exemplos {
+    verificarCaso(v, exemplo)
+}
+
+var invalidas: texto[] = ["abc", "1.2.3.4", "^", ">=a", "1.0.0 - 2.0.0", "1.2-beta"]
+para cada entrada em invalidas {
+    v.verificar(nao restricaoValida(entrada), "\"" + entrada + "\" deveria ser inválida")
+}
+
+// A mensagem cita a restrição original.
+tente {
+    analisarRestricao("^1 || >=a")
+    v.verificar(falso, "\"^1 || >=a\" deveria ser inválida")
+} pegue (erro: ErroRestricaoInvalida) {
+    v.contem(erro.mensagem, "restrição de versão inválida \"^1 || >=a\"", "mensagem do erro")
+}
+
+v.finalizar()

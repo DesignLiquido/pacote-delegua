@@ -1,0 +1,205 @@
+// Estruturas do pacoteca.jsonc e das respostas da pacoteca-api.
+//
+// Porte de interno/modelos/pacoteca.go do pacote-go. Campos opcionais (ponteiros no Go)
+// usam "" para ausente ou nulo.
+//
+// Níveis de verificação da pacoteca-api: "nao_verificado", "em_analise", "verificado",
+// "certificado" e "suspenso". Realizações de Delégua: "node", "llvm" e "cgd".
+
+importar { analisarJsonc, campoTexto, lerListaTexto, lerDicionarioTexto } de "./jsonc"
+
+// Parâmetro de uma função exportada. `tipoDado` vem do campo JSON "tipo" (`tipo` é
+// palavra reservada).
+classe Argumento {
+    nome: texto
+    tipoDado: texto
+
+    construtor(nome: texto, tipoDado: texto) {
+        isto.nome = nome
+        isto.tipoDado = tipoDado
+    }
+}
+
+// Símbolo exportado pelo pacote. `categoria` vem do campo JSON "tipo": "funcao", "classe"
+// ou "constante".
+classe Simbolo {
+    nome: texto
+    categoria: texto
+    tipoRetorno: texto
+    argumentos: Argumento[]
+    documentacao: texto
+
+    construtor(nome: texto, categoria: texto) {
+        isto.nome = nome
+        isto.categoria = categoria
+        isto.tipoRetorno = ""
+        isto.argumentos = []
+        isto.documentacao = ""
+    }
+}
+
+// O arquivo pacoteca.jsonc na raiz de um repositório de pacote Delégua.
+classe PacotecaJsonc {
+    nome: texto
+    descricao: texto
+    versao: texto
+    realizacoes: texto[]
+    // nome do pacote → restrição de versão
+    dependencias: dicionário
+    simbolos: Simbolo[]
+    pontoDeEntrada: texto
+    pacoteNpm: texto
+
+    construtor() {
+        isto.nome = ""
+        isto.descricao = ""
+        isto.versao = ""
+        isto.realizacoes = []
+        isto.dependencias = {}
+        isto.simbolos = []
+        isto.pontoDeEntrada = ""
+        isto.pacoteNpm = ""
+    }
+}
+
+// Pacote retornado pela pacoteca-api.
+classe PacoteRegistro {
+    id: texto
+    nome: texto
+    descricao: texto
+    urlRepositorio: texto
+    realizacoes: texto[]
+    registradoPor: texto
+    nivelVerificacao: texto
+    pacoteNpm: texto
+    pontoDeEntrada: texto
+
+    construtor(nome: texto, urlRepositorio: texto) {
+        isto.id = ""
+        isto.nome = nome
+        isto.descricao = ""
+        isto.urlRepositorio = urlRepositorio
+        isto.realizacoes = []
+        isto.registradoPor = ""
+        isto.nivelVerificacao = ""
+        isto.pacoteNpm = ""
+        isto.pontoDeEntrada = ""
+    }
+}
+
+// Versão de pacote retornada pela pacoteca-api. Só versões com tag e commit foram
+// publicadas e podem ser instaladas.
+classe VersaoRegistro {
+    id: texto
+    pacoteId: texto
+    versao: texto
+    tagGitHub: texto
+    hashCommit: texto
+    realizacoes: texto[]
+    pacoteNpm: texto
+    pontoDeEntrada: texto
+    // nome do pacote → restrição de versão
+    dependencias: dicionário
+    nivelVerificacao: texto
+
+    construtor(versao: texto) {
+        isto.id = ""
+        isto.pacoteId = ""
+        isto.versao = versao
+        isto.tagGitHub = ""
+        isto.hashCommit = ""
+        isto.realizacoes = []
+        isto.pacoteNpm = ""
+        isto.pontoDeEntrada = ""
+        isto.dependencias = {}
+        isto.nivelVerificacao = ""
+    }
+
+    // Indica se a versão foi publicada a partir de uma tag e pode ser instalada.
+    publicada(): lógico {
+        retorna isto.tagGitHub != "" e isto.hashCommit != ""
+    }
+}
+
+funcao lerArgumentos(objeto: texto, destino: Simbolo) {
+    var json = importar("json")
+    se nao json.contemCampo(objeto, "argumentos") {
+        retorna
+    }
+    var lista = json.obterCampo(objeto, "argumentos")
+    se json.tipo(lista) != "vetor" {
+        retorna
+    }
+    var total: inteiro = json.tamanho(lista)
+    para (var i = 0; i < total; i = i + 1) {
+        var item = json.obterItem(lista, i)
+        se json.tipo(item) == "objeto" {
+            destino.argumentos.adicionar(Argumento(campoTexto(item, "nome"), campoTexto(item, "tipo")))
+        }
+    }
+}
+
+funcao lerSimbolos(objeto: texto, destino: PacotecaJsonc) {
+    var json = importar("json")
+    se nao json.contemCampo(objeto, "simbolos") {
+        retorna
+    }
+    var lista = json.obterCampo(objeto, "simbolos")
+    se json.tipo(lista) != "vetor" {
+        retorna
+    }
+    var total: inteiro = json.tamanho(lista)
+    para (var i = 0; i < total; i = i + 1) {
+        var item = json.obterItem(lista, i)
+        se json.tipo(item) == "objeto" {
+            var simbolo = Simbolo(campoTexto(item, "nome"), campoTexto(item, "tipo"))
+            simbolo.tipoRetorno = campoTexto(item, "tipoRetorno")
+            simbolo.documentacao = campoTexto(item, "documentacao")
+            lerArgumentos(item, simbolo)
+            destino.simbolos.adicionar(simbolo)
+        }
+    }
+}
+
+// Interpreta o conteúdo de um pacoteca.jsonc.
+funcao lerPacotecaJsonc(conteudo: texto): PacotecaJsonc {
+    var objeto = analisarJsonc(conteudo)
+    var pacoteca = PacotecaJsonc()
+    pacoteca.nome = campoTexto(objeto, "nome")
+    pacoteca.descricao = campoTexto(objeto, "descricao")
+    pacoteca.versao = campoTexto(objeto, "versao")
+    lerListaTexto(objeto, "realizacoes", pacoteca.realizacoes)
+    lerDicionarioTexto(objeto, "dependencias", pacoteca.dependencias)
+    lerSimbolos(objeto, pacoteca)
+    pacoteca.pontoDeEntrada = campoTexto(objeto, "pontoDeEntrada")
+    pacoteca.pacoteNpm = campoTexto(objeto, "pacoteNpm")
+    retorna pacoteca
+}
+
+// Converte um objeto JSON (identificador do módulo `json`) em PacoteRegistro.
+funcao pacoteRegistroDeJson(objeto: texto): PacoteRegistro {
+    var pacote = PacoteRegistro(campoTexto(objeto, "nome"), campoTexto(objeto, "urlRepositorio"))
+    pacote.id = campoTexto(objeto, "id")
+    pacote.descricao = campoTexto(objeto, "descricao")
+    lerListaTexto(objeto, "realizacoes", pacote.realizacoes)
+    pacote.registradoPor = campoTexto(objeto, "registradoPor")
+    pacote.nivelVerificacao = campoTexto(objeto, "nivelVerificacao")
+    pacote.pacoteNpm = campoTexto(objeto, "pacoteNpm")
+    pacote.pontoDeEntrada = campoTexto(objeto, "pontoDeEntrada")
+    retorna pacote
+}
+
+// Converte um objeto JSON (identificador do módulo `json`) em VersaoRegistro.
+funcao versaoRegistroDeJson(objeto: texto): VersaoRegistro {
+    var versao = VersaoRegistro(campoTexto(objeto, "versao"))
+    versao.id = campoTexto(objeto, "id")
+    versao.pacoteId = campoTexto(objeto, "pacoteId")
+    versao.tagGitHub = campoTexto(objeto, "tagGitHub")
+    versao.hashCommit = campoTexto(objeto, "hashCommit")
+    lerListaTexto(objeto, "realizacoes", versao.realizacoes)
+    versao.pacoteNpm = campoTexto(objeto, "pacoteNpm")
+    versao.pontoDeEntrada = campoTexto(objeto, "pontoDeEntrada")
+    lerDicionarioTexto(objeto, "dependencias", versao.dependencias)
+    versao.nivelVerificacao = campoTexto(objeto, "nivelVerificacao")
+    retorna versao
+}

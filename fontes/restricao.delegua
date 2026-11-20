@@ -1,0 +1,393 @@
+// Restrições de versão no estilo do npm, como "^1.2.0", "~0.5", ">=1.0.0 <2.0.0", "1.x"
+// ou "^1.0.0 || ^2.0.0".
+//
+// Versões de pré-lançamento (1.0.0-beta) só satisfazem a restrição quando algum comparador
+// dela menciona um pré-lançamento com o mesmo MAIOR.MENOR.CORRECAO, como no npm: assim,
+// "^1.0.0" nunca instala 1.1.0-beta por acidente.
+//
+// Porte de interno/semver/restricao.go do pacote-go.
+
+importar { Versao, compararVersoes, ehDigitos, maximoDigitos } de "./semver"
+
+classe ErroRestricaoInvalida herda Excecao {
+    construtor(mensagem: texto) {
+        super.construtor(mensagem)
+    }
+}
+
+// Um comparador: `sinal` é "=", ">", ">=", "<" ou "<=".
+classe Comparador {
+    sinal: texto
+    versao: Versao
+    // Marca limites gerados ao expandir ^, ~ e curingas (ex.: "<2.0.0-0"). Eles não
+    // autorizam pré-lançamentos.
+    sintetico: lógico
+
+    construtor(sinal: texto, versao: Versao, sintetico: lógico) {
+        isto.sinal = sinal
+        isto.versao = versao
+        isto.sintetico = sintetico
+    }
+
+    satisfaz(candidata: Versao): lógico {
+        var resultado: inteiro = compararVersoes(candidata, isto.versao)
+        se isto.sinal == "=" {
+            retorna resultado == 0
+        }
+        se isto.sinal == ">" {
+            retorna resultado > 0
+        }
+        se isto.sinal == ">=" {
+            retorna resultado >= 0
+        }
+        se isto.sinal == "<" {
+            retorna resultado < 0
+        }
+        se isto.sinal == "<=" {
+            retorna resultado <= 0
+        }
+        retorna falso
+    }
+}
+
+// E de comparadores.
+classe ConjuntoComparadores {
+    comparadores: Comparador[]
+
+    construtor() {
+        isto.comparadores = []
+    }
+
+    adicionar(comparador: Comparador) {
+        isto.comparadores.adicionar(comparador)
+    }
+
+    satisfaz(candidata: Versao): lógico {
+        var comparadores: Comparador[] = isto.comparadores
+        para cada comparador em comparadores {
+            se nao comparador.satisfaz(candidata) {
+                retorna falso
+            }
+        }
+        var preCandidata: texto[] = candidata.preLancamento
+        se preCandidata.tamanho() == 0 {
+            retorna verdadeiro
+        }
+        para cada comparador em comparadores {
+            var alvo: Versao = comparador.versao
+            var preAlvo: texto[] = alvo.preLancamento
+            se nao comparador.sintetico e preAlvo.tamanho() > 0 e alvo.maior == candidata.maior e alvo.menor == candidata.menor e alvo.correcao == candidata.correcao {
+                retorna verdadeiro
+            }
+        }
+        retorna falso
+    }
+}
+
+// OU de conjuntos de comparadores.
+classe Restricao {
+    original: texto
+    conjuntos: ConjuntoComparadores[]
+
+    construtor(original: texto) {
+        isto.original = original
+        isto.conjuntos = []
+    }
+
+    satisfaz(candidata: Versao): lógico {
+        var conjuntos: ConjuntoComparadores[] = isto.conjuntos
+        para cada conjunto em conjuntos {
+            se conjunto.satisfaz(candidata) {
+                retorna verdadeiro
+            }
+        }
+        retorna falso
+    }
+}
+
+// Versão possivelmente incompleta: "1", "1.2", "1.2.x".
+classe Parcial {
+    maior: inteiro
+    menor: inteiro
+    correcao: inteiro
+    // Quantas partes numéricas foram informadas (0 a 3).
+    informadas: inteiro
+    preLancamento: texto[]
+
+    construtor() {
+        isto.maior = 0
+        isto.menor = 0
+        isto.correcao = 0
+        isto.informadas = 0
+        isto.preLancamento = []
+    }
+
+    inferior(): Versao {
+        var versao = Versao(isto.maior, isto.menor, isto.correcao)
+        var pre: texto[] = isto.preLancamento
+        para cada identificador em pre {
+            versao.preLancamento.adicionar(identificador)
+        }
+        retorna versao
+    }
+}
+
+funcao erroRestricao(detalhe: texto): ErroRestricaoInvalida {
+    retorna ErroRestricaoInvalida(detalhe)
+}
+
+// [0-9A-Za-z.-]+
+funcao ehTrechoPontuado(valor: texto): lógico {
+    se valor.tamanho() == 0 {
+        retorna falso
+    }
+    var permitidos = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz.-"
+    para (var i = 0; i < valor.tamanho(); i = i + 1) {
+        se nao permitidos.inclui(valor[i]) {
+            retorna falso
+        }
+    }
+    retorna verdadeiro
+}
+
+funcao ehCuringa(valor: texto): lógico {
+    retorna valor == "x" ou valor == "X" ou valor == "*"
+}
+
+// Equivale a ^v?(\d+|[xX*])(?:\.(\d+|[xX*]))?(?:\.(\d+|[xX*]))?(?:-([0-9A-Za-z.-]+))?(?:\+[0-9A-Za-z.-]+)?$
+funcao analisarParcial(entrada: texto): Parcial {
+    var invalida = "versão inválida: \"" + entrada + "\""
+    var resto = entrada
+    se resto.comecaCom("v") {
+        resto = resto.subtexto(1, resto.tamanho())
+    }
+
+    var posicaoMais = resto.encontrar("+")
+    se posicaoMais >= 0 {
+        se nao ehTrechoPontuado(resto.subtexto(posicaoMais + 1, resto.tamanho())) {
+            falhar erroRestricao(invalida)
+        }
+        resto = resto.subtexto(0, posicaoMais)
+    }
+
+    var temPreLancamento = falso
+    var preLancamento = ""
+    var posicaoMenos = resto.encontrar("-")
+    se posicaoMenos >= 0 {
+        preLancamento = resto.subtexto(posicaoMenos + 1, resto.tamanho())
+        se nao ehTrechoPontuado(preLancamento) {
+            falhar erroRestricao(invalida)
+        }
+        temPreLancamento = verdadeiro
+        resto = resto.subtexto(0, posicaoMenos)
+    }
+
+    var partes = resto.dividir(".")
+    se partes.tamanho() < 1 ou partes.tamanho() > 3 {
+        falhar erroRestricao(invalida)
+    }
+    para cada parte em partes {
+        se nao ehDigitos(parte) e nao ehCuringa(parte) {
+            falhar erroRestricao(invalida)
+        }
+        se parte.tamanho() > maximoDigitos() {
+            falhar erroRestricao(invalida)
+        }
+    }
+
+    var parcial = Parcial()
+    var curinga = falso
+    para (var i = 0; i < partes.tamanho(); i = i + 1) {
+        var parte: texto = partes[i]
+        se ehCuringa(parte) {
+            curinga = verdadeiro
+        }
+        se nao curinga {
+            var valor: inteiro = inteiro(parte)
+            se i == 0 {
+                parcial.maior = valor
+            }
+            se i == 1 {
+                parcial.menor = valor
+            }
+            se i == 2 {
+                parcial.correcao = valor
+            }
+            parcial.informadas = i + 1
+        }
+    }
+
+    se temPreLancamento {
+        se parcial.informadas < 3 {
+            falhar erroRestricao("pré-lançamento exige versão completa: \"" + entrada + "\"")
+        }
+        var identificadores = preLancamento.dividir(".")
+        para cada identificador em identificadores {
+            parcial.preLancamento.adicionar(identificador)
+        }
+    }
+    retorna parcial
+}
+
+// Limite superior exclusivo "<X.Y.Z-0", menor que qualquer pré-lançamento de X.Y.Z.
+funcao limite(maior: inteiro, menor: inteiro, correcao: inteiro): Comparador {
+    var versao = Versao(maior, menor, correcao)
+    versao.preLancamento.adicionar("0")
+    retorna Comparador("<", versao, verdadeiro)
+}
+
+// Limite exclusivo acima de uma versão parcial: 1 → <2.0.0-0, 1.2 → <1.3.0-0.
+funcao proximoParcial(parcial: Parcial): Comparador {
+    se parcial.informadas == 1 {
+        retorna limite(parcial.maior + 1, 0, 0)
+    }
+    se parcial.informadas == 2 {
+        retorna limite(parcial.maior, parcial.menor + 1, 0)
+    }
+    retorna limite(parcial.maior, parcial.menor, parcial.correcao + 1)
+}
+
+funcao prefixoOperador(termo: texto): texto {
+    var operadores: texto[] = [">=", "<=", ">", "<", "=", "^", "~"]
+    para cada candidato em operadores {
+        se termo.comecaCom(candidato) {
+            retorna candidato
+        }
+    }
+    retorna ""
+}
+
+// Acrescenta ao conjunto os comparadores equivalentes a um termo, como "^1.2" ou ">=1.0.0".
+funcao adicionarTermo(conjunto: ConjuntoComparadores, termo: texto) {
+    var prefixo = prefixoOperador(termo)
+    var parcial = analisarParcial(termo.subtexto(prefixo.tamanho(), termo.tamanho()))
+
+    se parcial.informadas == 0 {
+        // "*", "^*", ">=x": qualquer versão, exceto "<*" / ">*", que nada aceitam.
+        se prefixo == "<" ou prefixo == ">" {
+            var zero = Versao(0, 0, 0)
+            zero.preLancamento.adicionar("0")
+            conjunto.adicionar(Comparador("<", zero, verdadeiro))
+        }
+        retorna
+    }
+
+    var baixo = Comparador(">=", parcial.inferior(), falso)
+
+    se prefixo == "" ou prefixo == "=" {
+        se parcial.informadas == 3 {
+            conjunto.adicionar(Comparador("=", parcial.inferior(), falso))
+            retorna
+        }
+        conjunto.adicionar(baixo)
+        conjunto.adicionar(proximoParcial(parcial))
+        retorna
+    }
+
+    se prefixo == "^" {
+        // Permite mudanças que não alteram o primeiro componente diferente de zero.
+        conjunto.adicionar(baixo)
+        se parcial.maior > 0 ou parcial.informadas == 1 {
+            conjunto.adicionar(limite(parcial.maior + 1, 0, 0))
+            retorna
+        }
+        se parcial.menor > 0 ou parcial.informadas == 2 {
+            conjunto.adicionar(limite(0, parcial.menor + 1, 0))
+            retorna
+        }
+        conjunto.adicionar(limite(0, 0, parcial.correcao + 1))
+        retorna
+    }
+
+    se prefixo == "~" {
+        conjunto.adicionar(baixo)
+        se parcial.informadas == 1 {
+            conjunto.adicionar(limite(parcial.maior + 1, 0, 0))
+            retorna
+        }
+        conjunto.adicionar(limite(parcial.maior, parcial.menor + 1, 0))
+        retorna
+    }
+
+    se prefixo == ">=" {
+        conjunto.adicionar(baixo)
+        retorna
+    }
+
+    se prefixo == ">" {
+        se parcial.informadas == 3 {
+            conjunto.adicionar(Comparador(">", parcial.inferior(), falso))
+            retorna
+        }
+        // ">1.2" significa acima de qualquer 1.2.x.
+        var acima: Versao = proximoParcial(parcial).versao
+        conjunto.adicionar(Comparador(">=", Versao(acima.maior, acima.menor, acima.correcao), verdadeiro))
+        retorna
+    }
+
+    se prefixo == "<" {
+        se parcial.informadas == 3 {
+            conjunto.adicionar(Comparador("<", parcial.inferior(), falso))
+            retorna
+        }
+        conjunto.adicionar(limite(parcial.maior, parcial.menor, parcial.correcao))
+        retorna
+    }
+
+    // "<="
+    se parcial.informadas == 3 {
+        conjunto.adicionar(Comparador("<=", parcial.inferior(), falso))
+        retorna
+    }
+    conjunto.adicionar(proximoParcial(parcial))
+}
+
+funcao ehOperadorIsolado(termo: texto): lógico {
+    retorna termo == ">=" ou termo == "<=" ou termo == ">" ou termo == "<" ou termo == "=" ou termo == "^" ou termo == "~"
+}
+
+funcao analisarConjunto(entrada: texto): ConjuntoComparadores {
+    var conjunto = ConjuntoComparadores()
+    se entrada == "" ou entrada == "*" ou entrada == "x" ou entrada == "X" {
+        retorna conjunto
+    }
+
+    // Termos separados por espaço; permite espaço entre operador e versão: ">= 1.0.0".
+    var termos: texto[] = []
+    var pedacos = entrada.substituir("\t", " ").dividir(" ")
+    para cada pedaco em pedacos {
+        se pedaco != "" {
+            termos.adicionar(pedaco)
+        }
+    }
+
+    var i = 0
+    enquanto i < termos.tamanho() {
+        var termo: texto = termos[i]
+        se ehOperadorIsolado(termo) e i + 1 < termos.tamanho() {
+            var seguinte: texto = termos[i + 1]
+            termo = termo + seguinte
+            i = i + 1
+        }
+        se termo == "-" {
+            falhar erroRestricao("intervalos com hífen (\"1.0.0 - 2.0.0\") não são suportados; use \">=1.0.0 <=2.0.0\"")
+        }
+        adicionarTermo(conjunto, termo)
+        i = i + 1
+    }
+    retorna conjunto
+}
+
+// Interpreta o texto de uma restrição de versão.
+funcao analisarRestricao(entrada: texto): Restricao {
+    var restricao = Restricao(entrada)
+    var alternativas = entrada.dividir("||")
+    para cada alternativa em alternativas {
+        tente {
+            restricao.conjuntos.adicionar(analisarConjunto(alternativa.aparar()))
+        } pegue (erro: ErroRestricaoInvalida) {
+            falhar ErroRestricaoInvalida("restrição de versão inválida \"" + entrada + "\": " + erro.mensagem)
+        }
+    }
+    retorna restricao
+}

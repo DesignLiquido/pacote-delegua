@@ -1,0 +1,156 @@
+// Documentos JSONC: JSON com comentários de linha (//) e de bloco (/* */).
+//
+// Porte de interno/jsonc/analisador.go do pacote-go. Os valores JSON são manipulados pelo
+// módulo embutido `json` (cJSON), em que um valor é um identificador opaco.
+
+classe ErroJsonc herda Excecao {
+    construtor(mensagem: texto) {
+        super.construtor(mensagem)
+    }
+}
+
+// Remove comentários de linha e de bloco, preservando intacto o conteúdo de textos literais.
+// Trabalha byte a byte, como o original; copia trechos inteiros entre comentários.
+funcao removerComentarios(dados: texto): texto {
+    var saida = ""
+    var inicioTrecho = 0
+    var i = 0
+    var n = dados.tamanho()
+
+    enquanto i < n {
+        var c: texto = dados[i]
+
+        se c == "\"" {
+            // Texto literal: avança até as aspas de fechamento, pulando escapes.
+            i = i + 1
+            var fechou = falso
+            enquanto i < n e nao fechou {
+                var d: texto = dados[i]
+                se d == "\\" e i + 1 < n {
+                    i = i + 2
+                } senao {
+                    se d == "\"" {
+                        fechou = verdadeiro
+                    }
+                    i = i + 1
+                }
+            }
+        } senao {
+            var seguinte = ""
+            se i + 1 < n {
+                seguinte = dados[i + 1]
+            }
+
+            se c == "/" e seguinte == "/" {
+                saida = saida + dados.subtexto(inicioTrecho, i)
+                enquanto i < n e dados[i] != "\n" {
+                    i = i + 1
+                }
+                inicioTrecho = i
+            } senao {
+                se c == "/" e seguinte == "*" {
+                    saida = saida + dados.subtexto(inicioTrecho, i)
+                    i = i + 2
+                    var fechado = falso
+                    enquanto i + 1 < n e nao fechado {
+                        var atual: texto = dados[i]
+                        var proximo: texto = dados[i + 1]
+                        se atual == "*" e proximo == "/" {
+                            fechado = verdadeiro
+                        }
+                        i = i + 1
+                    }
+                    se nao fechado {
+                        falhar ErroJsonc("erro ao processar JSONC: comentário de bloco não fechado")
+                    }
+                    i = i + 1
+                    inicioTrecho = i
+                } senao {
+                    i = i + 1
+                }
+            }
+        }
+    }
+
+    retorna saida + dados.subtexto(inicioTrecho, n)
+}
+
+// Analisa um documento JSONC e devolve o valor JSON (identificador do módulo `json`).
+funcao analisarJsonc(dados: texto): texto {
+    var json = importar("json")
+    var limpo = removerComentarios(dados)
+    var valor = json.textoParaJson(limpo)
+    se valor == nulo {
+        falhar ErroJsonc("JSON inválido")
+    }
+    retorna valor
+}
+
+// Leitura tolerante de campos, como o encoding/json do Go: campo ausente, nulo ou de outro
+// tipo dá o valor zero ("", lista vazia).
+
+funcao campoTexto(objeto: texto, nome: texto): texto {
+    var json = importar("json")
+    se nao json.contemCampo(objeto, nome) {
+        retorna ""
+    }
+    var valor = json.obterCampo(objeto, nome)
+    se json.tipo(valor) != "texto" {
+        retorna ""
+    }
+    var resultado: texto = json.valorTexto(valor)
+    retorna resultado
+}
+
+funcao campoInteiro(objeto: texto, nome: texto): inteiro {
+    var json = importar("json")
+    var resultado: inteiro = 0
+    se json.contemCampo(objeto, nome) {
+        var valor = json.obterCampo(objeto, nome)
+        se json.tipo(valor) == "numero" {
+            var numero = json.valorNumero(valor)
+            resultado = inteiro(numero)
+        }
+    }
+    retorna resultado
+}
+
+// Acrescenta a `destino` os textos do vetor JSON `objeto[nome]`.
+funcao lerListaTexto(objeto: texto, nome: texto, destino: texto[]) {
+    var json = importar("json")
+    se nao json.contemCampo(objeto, nome) {
+        retorna
+    }
+    var lista = json.obterCampo(objeto, nome)
+    se json.tipo(lista) != "vetor" {
+        retorna
+    }
+    var total: inteiro = json.tamanho(lista)
+    para (var i = 0; i < total; i = i + 1) {
+        var item = json.obterItem(lista, i)
+        se json.tipo(item) == "texto" {
+            var valor: texto = json.valorTexto(item)
+            destino.adicionar(valor)
+        }
+    }
+}
+
+// Copia para `destino` os pares texto → texto do objeto JSON `objeto[nome]`.
+funcao lerDicionarioTexto(objeto: texto, nome: texto, destino: dicionário) {
+    var json = importar("json")
+    se nao json.contemCampo(objeto, nome) {
+        retorna
+    }
+    var mapa = json.obterCampo(objeto, nome)
+    se json.tipo(mapa) != "objeto" {
+        retorna
+    }
+    var chaves: texto[] = json.chaves(mapa)
+    para cada chave em chaves {
+        var item = json.obterCampo(mapa, chave)
+        se json.tipo(item) == "texto" {
+            var valor: texto = json.valorTexto(item)
+            destino[chave] = valor
+        }
+    }
+}

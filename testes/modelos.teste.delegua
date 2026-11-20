@@ -1,0 +1,50 @@
+// Testes de fontes/modelos.delegua (o pacote-go não tem testes para interno/modelos).
+importar { Verificador } de "./verificador"
+importar { lerPacotecaJsonc, pacoteRegistroDeJson, versaoRegistroDeJson, VersaoRegistro, PacotecaJsonc, Simbolo, Argumento } de "../fontes/modelos"
+
+var v = Verificador("modelos")
+var json = importar("json")
+
+var pacoteca = lerPacotecaJsonc("{\n  // comentário\n  \"nome\": \"mat\",\n  \"descricao\": \"Matemática\",\n  \"versao\": \"1.2.0\",\n  \"realizacoes\": [\"node\", \"llvm\"],\n  \"dependencias\": {\"fisica\": \"^0.5\"},\n  \"simbolos\": [\n    {\"nome\": \"soma\", \"tipo\": \"funcao\", \"tipoRetorno\": \"número\", \"argumentos\": [{\"nome\": \"a\", \"tipo\": \"número\"}, {\"nome\": \"b\", \"tipo\": \"número\"}]},\n    {\"nome\": \"PI\", \"tipo\": \"constante\"}\n  ],\n  \"pontoDeEntrada\": \"fontes/mat.delegua\"\n}")
+v.igual(pacoteca.nome, "mat", "nome")
+v.igual(pacoteca.descricao, "Matemática", "descricao")
+v.igual(pacoteca.versao, "1.2.0", "versao")
+var realizacoes: texto[] = pacoteca.realizacoes
+v.igual(realizacoes.juntar(","), "node,llvm", "realizacoes")
+var restricaoFisica: texto = pacoteca.dependencias["fisica"]
+v.igual(restricaoFisica, "^0.5", "dependencias")
+v.igual(pacoteca.pontoDeEntrada, "fontes/mat.delegua", "pontoDeEntrada")
+v.igual(pacoteca.pacoteNpm, "", "pacoteNpm ausente")
+
+var simbolos: Simbolo[] = pacoteca.simbolos
+v.verificar(simbolos.tamanho() == 2, "dois símbolos")
+var soma: Simbolo = simbolos[0]
+v.igual(soma.nome, "soma", "símbolo nome")
+v.igual(soma.categoria, "funcao", "símbolo categoria")
+v.igual(soma.tipoRetorno, "número", "símbolo tipoRetorno")
+var argumentos: Argumento[] = soma.argumentos
+v.verificar(argumentos.tamanho() == 2, "dois argumentos")
+var segundo: Argumento = argumentos[1]
+v.igual(segundo.nome + ":" + segundo.tipoDado, "b:número", "argumento")
+var pi: Simbolo = simbolos[1]
+var argumentosPi: Argumento[] = pi.argumentos
+v.verificar(argumentosPi.tamanho() == 0, "constante sem argumentos")
+
+var pacote = pacoteRegistroDeJson(json.textoParaJson("{\"id\": \"p1\", \"nome\": \"mat\", \"descricao\": null, \"urlRepositorio\": \"https://github.com/org/mat\", \"realizacoes\": [\"node\"], \"nivelVerificacao\": \"verificado\", \"pacoteNpm\": null}"))
+v.igual(pacote.id, "p1", "pacote id")
+v.igual(pacote.urlRepositorio, "https://github.com/org/mat", "pacote url")
+v.igual(pacote.descricao, "", "pacote descricao nula")
+v.igual(pacote.nivelVerificacao, "verificado", "pacote nivel")
+
+var publicada = versaoRegistroDeJson(json.textoParaJson("{\"versao\": \"1.0.0\", \"tagGitHub\": \"v1.0.0\", \"hashCommit\": \"abc\", \"dependencias\": {\"a\": \"^1\"}, \"nivelVerificacao\": \"verificado\"}"))
+v.verificar(publicada.publicada(), "versão com tag e commit é publicada")
+var restricaoA: texto = publicada.dependencias["a"]
+v.igual(restricaoA, "^1", "versão dependencias")
+
+var semTag = versaoRegistroDeJson(json.textoParaJson("{\"versao\": \"1.1.0\", \"tagGitHub\": null, \"hashCommit\": \"abc\"}"))
+v.verificar(nao semTag.publicada(), "versão sem tag não é publicada")
+var semCommit = VersaoRegistro("1.2.0")
+semCommit.tagGitHub = "v1.2.0"
+v.verificar(nao semCommit.publicada(), "versão sem commit não é publicada")
+
+v.finalizar()

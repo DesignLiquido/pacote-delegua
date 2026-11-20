@@ -1,0 +1,58 @@
+// Testes de fontes/jsonc.delegua (o pacote-go não tem testes para interno/jsonc).
+importar { Verificador } de "./verificador"
+importar { removerComentarios, analisarJsonc, campoTexto, campoInteiro, lerListaTexto, lerDicionarioTexto, ErroJsonc } de "../fontes/jsonc"
+
+var v = Verificador("jsonc")
+
+v.igual(removerComentarios("{\"a\": 1} // fim"), "{\"a\": 1} ", "comentário de linha")
+v.igual(removerComentarios("// início\n{}"), "\n{}", "comentário de linha no início preserva a quebra")
+v.igual(removerComentarios("{/* bloco */\"a\": 1}"), "{\"a\": 1}", "comentário de bloco")
+v.igual(removerComentarios("{/* várias\nlinhas */}"), "{}", "comentário de bloco com várias linhas")
+v.igual(removerComentarios("{\"url\": \"https://x\"}"), "{\"url\": \"https://x\"}", "// dentro de texto é preservado")
+v.igual(removerComentarios("{\"a\": \"/* não */\"}"), "{\"a\": \"/* não */\"}", "/* dentro de texto é preservado")
+v.igual(removerComentarios("{\"a\": \"x\\\"// y\"}"), "{\"a\": \"x\\\"// y\"}", "aspas escapadas não fecham o texto")
+v.igual(removerComentarios("{}/**/"), "{}", "bloco vazio")
+
+funcao falhaAoRemover(entrada: texto): texto {
+    tente {
+        removerComentarios(entrada)
+    } pegue (erro: ErroJsonc) {
+        retorna erro.mensagem
+    }
+    retorna ""
+}
+v.contem(falhaAoRemover("{} /* aberto"), "comentário de bloco não fechado", "bloco não fechado")
+v.contem(falhaAoRemover("{} /*"), "comentário de bloco não fechado", "bloco não fechado no fim")
+
+funcao jsonValido(entrada: texto): lógico {
+    tente {
+        analisarJsonc(entrada)
+    } pegue (erro: ErroJsonc) {
+        retorna falso
+    }
+    retorna verdadeiro
+}
+v.verificar(nao jsonValido("{"), "JSON incompleto deve falhar")
+v.verificar(jsonValido("// só comentário\n{\"a\": 1}"), "JSONC válido")
+
+var documento = analisarJsonc("{\n  // nome do pacote\n  \"nome\": \"mat\",\n  \"formato\": 2,\n  \"realizacoes\": [\"node\", \"llvm\", 3],\n  \"dependencias\": {\"z\": \"^1\", \"a\": \"~2\"}, /* fim */\n  \"nulo\": null\n}")
+v.igual(campoTexto(documento, "nome"), "mat", "campoTexto")
+v.igual(campoTexto(documento, "ausente"), "", "campoTexto ausente")
+v.igual(campoTexto(documento, "nulo"), "", "campoTexto nulo")
+v.igual(campoTexto(documento, "formato"), "", "campoTexto de número")
+v.verificar(campoInteiro(documento, "formato") == 2, "campoInteiro")
+v.verificar(campoInteiro(documento, "ausente") == 0, "campoInteiro ausente")
+
+var realizacoes: texto[] = []
+lerListaTexto(documento, "realizacoes", realizacoes)
+v.igual(realizacoes.juntar(","), "node,llvm", "lerListaTexto ignora itens que não são texto")
+
+var dependencias: dicionário = {}
+lerDicionarioTexto(documento, "dependencias", dependencias)
+var chaves: texto[] = dependencias.chaves()
+var ordenadas: texto[] = chaves.ordenar()
+v.igual(ordenadas.juntar(","), "a,z", "lerDicionarioTexto chaves")
+var z: texto = dependencias["z"]
+v.igual(z, "^1", "lerDicionarioTexto valor")
+
+v.finalizar()

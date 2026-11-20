@@ -1,0 +1,83 @@
+// Porte de interno/trava/trava_test.go do pacote-go, mais uma comparação byte a byte com a
+// saída do Serializar() do Go.
+importar { Verificador } de "./verificador"
+importar { Trava, PacoteTravado, serializarTrava, travasIguais, analisarTrava, lerTrava, gravarTrava, nomeArquivoTrava, formatoAtualTrava, ErroTrava } de "../fontes/trava"
+
+var v = Verificador("trava")
+var arquivos = importar("arquivos")
+
+// Diretório temporário ao lado dos testes.
+var diretorio = arquivos.juntarCaminhos(arquivos.diretorioAtual(), "tmp-trava-teste")
+arquivos.criarDiretorio(diretorio)
+var caminho = arquivos.juntarCaminhos(diretorio, nomeArquivoTrava())
+arquivos.remover(caminho)
+
+funcao mensagemAoAnalisar(conteudo: texto): texto {
+    tente {
+        analisarTrava(conteudo, "pacoteca.lock")
+    } pegue (erro: ErroTrava) {
+        retorna erro.mensagem
+    }
+    retorna ""
+}
+
+// TestLerInexistenteRetornaVazia
+var vazia = lerTrava(caminho)
+var nomesVazia: texto[] = vazia.nomes()
+v.verificar(nomesVazia.tamanho() == 0 e vazia.formato == formatoAtualTrava(), "trava inexistente deve ser vazia")
+
+// TestGravarELer
+var trava = Trava()
+var mat = PacoteTravado("1.0.0", "abc")
+mat.tag = "v1.0.0"
+mat.realizacoes.adicionar("node")
+mat.dependencias["z"] = "^1"
+mat.dependencias["a"] = "^2"
+trava.definir("mat", mat)
+trava.definir("fisica", PacoteTravado("0.5.0", "def"))
+gravarTrava(trava, caminho)
+
+var lida = lerTrava(caminho)
+v.verificar(travasIguais(trava, lida), "trava lida difere da gravada")
+var gravado: texto = arquivos.lerTexto(caminho)
+v.verificar(gravado.encontrar("\"fisica\"") < gravado.encontrar("\"mat\""), "chaves devem estar em ordem alfabética")
+v.verificar(nao arquivos.existe(caminho + ".tmp"), "arquivo temporário não removido")
+var matLido: PacoteTravado = lida.obter("mat")
+var depZ: texto = matLido.dependencias["z"]
+v.igual(matLido.tag + " " + depZ, "v1.0.0 ^1", "campos lidos")
+
+// Regravar sobre um arquivo existente.
+trava.definir("outro", PacoteTravado("2.0.0", "fff"))
+gravarTrava(trava, caminho)
+var relida = lerTrava(caminho)
+v.verificar(relida.contem("outro"), "regravar substitui o arquivo existente")
+
+// TestLerFormatoDesconhecido
+v.contem(mensagemAoAnalisar("{\"formato\": 99, \"pacotes\": {}}"), "formato 99", "formato desconhecido")
+
+// TestLerInvalido
+v.contem(mensagemAoAnalisar("{"), "erro ao analisar pacoteca.lock", "JSON inválido")
+
+// Serialização idêntica à do Go (saída de trava.Serializar() no pacote-go).
+var referencia = Trava()
+var refMat = PacoteTravado("1.0.0", "abc")
+refMat.tag = "v1.0.0"
+refMat.realizacoes.adicionar("node")
+refMat.dependencias["z"] = "^1"
+refMat.dependencias["a"] = "^2"
+refMat.pontoDeEntrada = "fontes/a<b>.delegua"
+referencia.definir("mat", refMat)
+var refFisica = PacoteTravado("0.5.0", "def")
+refFisica.pacoteNpm = "@x/y\"q"
+referencia.definir("fisica", refFisica)
+
+var esperadoGo = "{\n  \"formato\": 1,\n  \"pacotes\": {\n    \"fisica\": {\n      \"versao\": \"0.5.0\",\n      \"urlRepositorio\": \"\",\n      \"tag\": \"\",\n      \"hashCommit\": \"def\",\n      \"realizacoes\": [],\n      \"pacoteNpm\": \"@x/y\\\"q\"\n    },\n    \"mat\": {\n      \"versao\": \"1.0.0\",\n      \"urlRepositorio\": \"\",\n      \"tag\": \"v1.0.0\",\n      \"hashCommit\": \"abc\",\n      \"realizacoes\": [\n        \"node\"\n      ],\n      \"pontoDeEntrada\": \"fontes/a<b>.delegua\",\n      \"dependencias\": {\n        \"a\": \"^2\",\n        \"z\": \"^1\"\n      }\n    }\n  }\n}\n"
+v.igual(serializarTrava(referencia), esperadoGo, "serialização igual à do Go")
+v.igual(serializarTrava(Trava()), "{\n  \"formato\": 1,\n  \"pacotes\": {}\n}\n", "trava vazia igual à do Go")
+
+// Ler o que o Go gravou e regravar dá o mesmo texto.
+v.igual(serializarTrava(analisarTrava(esperadoGo, "pacoteca.lock")), esperadoGo, "ida e volta")
+
+arquivos.remover(caminho)
+arquivos.remover(diretorio)
+v.finalizar()

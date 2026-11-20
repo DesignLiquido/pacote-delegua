@@ -1,0 +1,159 @@
+// Porte de interno/resolvedor/resolvedor_test.go do pacote-go.
+importar { Verificador } de "./verificador"
+importar { VersaoRegistro } de "../fontes/modelos"
+importar { Trava, PacoteTravado } de "../fontes/trava"
+importar { Fonte, Resultado, Resolvido, resolver, ErroResolucao, ErroConflito } de "../fontes/resolvedor"
+
+var v = Verificador("resolvedor")
+
+// Versão publicada; dependências no formato "nome@restricao".
+funcao publicada(versao: texto, dependencias: texto[]): VersaoRegistro {
+    var registro = VersaoRegistro(versao)
+    registro.tagGitHub = "v" + versao
+    registro.hashCommit = "hash-" + versao
+    registro.realizacoes.adicionar("node")
+    registro.nivelVerificacao = "verificado"
+    para cada dependencia em dependencias {
+        var posicao: inteiro = dependencia.encontrar("@")
+        var nome: texto = dependencia.subtexto(0, posicao)
+        var restricao: texto = dependencia.subtexto(posicao + 1, dependencia.tamanho())
+        registro.dependencias[nome] = restricao
+    }
+    retorna registro
+}
+
+// Mensagem do erro de resolução (ou de conflito); "" se resolveu.
+funcao erroAoResolver(fonte: Fonte, raiz: dicionário, travado: Trava): texto {
+    tente {
+        resolver(fonte, raiz, travado)
+    } pegue (erro: ErroConflito) {
+        retorna "conflito:" + erro.nome + ":" + erro.mensagem
+    } pegue (erro: ErroResolucao) {
+        retorna erro.mensagem
+    }
+    retorna ""
+}
+
+funcao versaoResolvida(resultado: Resultado, nome: texto): texto {
+    se nao resultado.contem(nome) {
+        retorna "(ausente)"
+    }
+    var resolvido: Resolvido = resultado.obter(nome)
+    var versao: texto = resolvido.pacote.versao
+    retorna versao
+}
+
+var nenhuma: texto[] = []
+
+// TestResolveMaiorVersaoQueAtende
+var fonte1 = Fonte()
+fonte1.adicionarVersao("mat", publicada("1.0.0", nenhuma))
+fonte1.adicionarVersao("mat", publicada("1.4.2", nenhuma))
+fonte1.adicionarVersao("mat", publicada("2.0.0", nenhuma))
+fonte1.adicionarVersao("mat", publicada("1.5.0-beta", nenhuma))
+var raiz1: dicionário = {}
+raiz1["mat"] = "^1.0.0"
+var resultado1 = resolver(fonte1, raiz1, Trava())
+var mat1: Resolvido = resultado1.obter("mat")
+v.igual(mat1.pacote.versao + " " + mat1.pacote.hashCommit + " " + mat1.pacote.tag, "1.4.2 hash-1.4.2 v1.4.2", "maior versão que atende")
+
+// TestResolveDependenciasTransitivas
+var fonte2 = Fonte()
+fonte2.adicionarVersao("web", publicada("1.0.0", ["http@^2.0.0", "json@~1.1.0"]))
+fonte2.adicionarVersao("http", publicada("2.3.0", ["json@^1.0.0"]))
+fonte2.adicionarVersao("http", publicada("3.0.0", nenhuma))
+fonte2.adicionarVersao("json", publicada("1.1.5", nenhuma))
+fonte2.adicionarVersao("json", publicada("1.2.0", nenhuma))
+var raiz2: dicionário = {}
+raiz2["web"] = "^1.0.0"
+var resultado2 = resolver(fonte2, raiz2, Trava())
+v.igual(versaoResolvida(resultado2, "web"), "1.0.0", "transitivas: web")
+v.igual(versaoResolvida(resultado2, "http"), "2.3.0", "transitivas: http")
+v.igual(versaoResolvida(resultado2, "json"), "1.1.5", "transitivas: json")
+v.verificar(fonte2.consultas("json") == 1, "versões de json consultadas " + texto(fonte2.consultas("json")) + " vezes; esperado 1 (cache)")
+var nomes2: texto[] = resultado2.nomes()
+v.igual(nomes2.juntar(","), "http,json,web", "nomes()")
+
+// TestResolveConflito
+var fonte3 = Fonte()
+fonte3.adicionarVersao("a", publicada("1.0.0", ["json@^2.0.0"]))
+fonte3.adicionarVersao("json", publicada("1.0.0", nenhuma))
+fonte3.adicionarVersao("json", publicada("2.0.0", nenhuma))
+var raiz3: dicionário = {}
+raiz3["a"] = "1.0.0"
+raiz3["json"] = "^1.0.0"
+var erro3 = erroAoResolver(fonte3, raiz3, Trava())
+v.contem(erro3, "conflito:json:", "conflito é ErroConflito em json")
+v.contem(erro3, "a@1.0.0 exige json ^2.0.0", "mensagem do conflito")
+
+// TestResolveIgnoraVersoesNaoPublicadasESuspensas
+var naoPublicada = publicada("1.9.0", nenhuma)
+naoPublicada.tagGitHub = ""
+var suspensa = publicada("1.8.0", nenhuma)
+suspensa.nivelVerificacao = "suspenso"
+var fonte4 = Fonte()
+fonte4.adicionarVersao("mat", publicada("1.0.0", nenhuma))
+fonte4.adicionarVersao("mat", naoPublicada)
+fonte4.adicionarVersao("mat", suspensa)
+var raiz4: dicionário = {}
+raiz4["mat"] = "^1.0.0"
+v.igual(versaoResolvida(resolver(fonte4, raiz4, Trava()), "mat"), "1.0.0", "ignora não publicadas e suspensas")
+var raiz4b: dicionário = {}
+raiz4b["mat"] = "1.8.0"
+v.contem(erroAoResolver(fonte4, raiz4b, Trava()), "suspensas", "erro de suspensão")
+
+// TestResolveSemVersoesPublicadas
+var semCommit = publicada("1.0.0", nenhuma)
+semCommit.hashCommit = ""
+var fonte5 = Fonte()
+fonte5.adicionarVersao("mat", semCommit)
+var raiz5: dicionário = {}
+raiz5["mat"] = "*"
+v.contem(erroAoResolver(fonte5, raiz5, Trava()), "não tem versões publicadas", "sem versões publicadas")
+
+// TestResolvePacoteInexistente
+var raiz6: dicionário = {}
+raiz6["nada"] = "*"
+v.contem(erroAoResolver(Fonte(), raiz6, Trava()), "não encontrado", "pacote inexistente")
+
+// TestResolvePrefereVersaoTravada
+var fonte7 = Fonte()
+fonte7.adicionarVersao("mat", publicada("1.0.0", nenhuma))
+fonte7.adicionarVersao("mat", publicada("1.2.0", nenhuma))
+var travado7 = Trava()
+travado7.definir("mat", PacoteTravado("1.0.0", "hash-1.0.0"))
+var raiz7: dicionário = {}
+raiz7["mat"] = "^1.0.0"
+v.igual(versaoResolvida(resolver(fonte7, raiz7, travado7), "mat"), "1.0.0", "prefere a versão travada")
+// Se a restrição mudou e a travada não atende mais, escolhe outra.
+var raiz7b: dicionário = {}
+raiz7b["mat"] = "^1.1.0"
+v.igual(versaoResolvida(resolver(fonte7, raiz7b, travado7), "mat"), "1.2.0", "travada que não atende é trocada")
+
+// TestResolveDetectaCommitAdulterado
+var fonte8 = Fonte()
+fonte8.adicionarVersao("mat", publicada("1.0.0", nenhuma))
+var travado8 = Trava()
+travado8.definir("mat", PacoteTravado("1.0.0", "outro-hash"))
+var raiz8: dicionário = {}
+raiz8["mat"] = "^1.0.0"
+v.contem(erroAoResolver(fonte8, raiz8, travado8), "adulteração", "commit adulterado")
+
+// TestResolveRestricaoInvalida
+var fonte9 = Fonte()
+fonte9.adicionarVersao("mat", publicada("1.0.0", nenhuma))
+var raiz9: dicionário = {}
+raiz9["mat"] = "abc"
+v.contem(erroAoResolver(fonte9, raiz9, Trava()), "restrição de versão inválida", "restrição inválida")
+
+// TestTravaDoResultado
+var fonte10 = Fonte()
+fonte10.adicionarVersao("mat", publicada("1.0.0", nenhuma))
+var raiz10: dicionário = {}
+raiz10["mat"] = "*"
+var resultado10: Resultado = resolver(fonte10, raiz10, Trava())
+var trava10: Trava = resultado10.paraTrava()
+var mat10: PacoteTravado = trava10.obter("mat")
+v.verificar(mat10.hashCommit == "hash-1.0.0" e trava10.formato == 1, "trava do resultado")
+
+v.finalizar()
