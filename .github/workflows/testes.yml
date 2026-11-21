@@ -9,13 +9,23 @@ on:
       - principal
   workflow_dispatch:
     inputs:
-      delegua-llvm:
-        description: 'Ramo, tag ou commit do delegua-llvm usado para compilar'
+      origem:
+        description: 'De onde vem o delegua-llvm: npm (versão publicada) ou git (repositório)'
         required: false
-        default: 'principal'
+        default: 'npm'
+        type: choice
+        options:
+          - npm
+          - git
+      versao:
+        description: 'Versão do npm (ex.: ^9.3.1) ou ramo, tag ou commit do git'
+        required: false
+        default: ''
 
 env:
   LLVM_VERSION_MAJOR: 22
+  # Versão do delegua-llvm usada em push e PR.
+  DELEGUA_LLVM_NPM: '^9.3.1'
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 jobs:
@@ -23,25 +33,18 @@ jobs:
     name: Testes (Linux)
     runs-on: ubuntu-24.04
 
+    env:
+      ORIGEM: ${{ github.event.inputs.origem || 'npm' }}
+      VERSAO: ${{ github.event.inputs.versao }}
+
     steps:
       - name: Checkout do pacote-delegua
         uses: actions/checkout@v4
-
-      # O compilador vem do repositório do delegua-llvm (e não do npm) para usar as correções
-      # mais recentes de que o porte depende.
-      - name: Checkout do delegua-llvm
-        uses: actions/checkout@v4
-        with:
-          repository: DesignLiquido/delegua-llvm
-          ref: ${{ github.event.inputs.delegua-llvm || 'principal' }}
-          path: delegua-llvm
 
       - name: Node.js 24
         uses: actions/setup-node@v4
         with:
           node-version: 24.x
-          cache: 'yarn'
-          cache-dependency-path: delegua-llvm/yarn.lock
 
       - name: LLVM 22, clang e libcurl
         run: |
@@ -51,24 +54,55 @@ jobs:
           echo "deb [signed-by=/usr/share/keyrings/llvm-archive-keyring.gpg] http://apt.llvm.org/noble/ llvm-toolchain-noble-${{ env.LLVM_VERSION_MAJOR }} main" | sudo tee /etc/apt/sources.list.d/llvm.list
           sudo apt-get update
           sudo apt-get install -y llvm-${{ env.LLVM_VERSION_MAJOR }}-dev clang-${{ env.LLVM_VERSION_MAJOR }}
+          # Usado pelo llvm-bindings para compilar o módulo nativo durante a instalação.
           echo "LLVM_DIR=/usr/lib/llvm-${{ env.LLVM_VERSION_MAJOR }}/cmake" >> $GITHUB_ENV
           # O delegua-llvm compila o código C com `clang` (e usa o `opt`, se houver).
           sudo ln -sf /usr/bin/clang-${{ env.LLVM_VERSION_MAJOR }} /usr/local/bin/clang
           sudo ln -sf /usr/bin/opt-${{ env.LLVM_VERSION_MAJOR }} /usr/local/bin/opt
           clang --version
 
-      - name: Compilação do delegua-llvm
+      # Padrão: a versão publicada no npm, com o comando `delegua-llvm` que os usuários instalam.
+      - name: delegua-llvm do npm
+        if: env.ORIGEM == 'npm'
+        run: |
+          versao="${VERSAO:-$DELEGUA_LLVM_NPM}"
+          npm install --prefix "$RUNNER_TEMP/delegua-llvm" --no-audit --no-fund "@designliquido/delegua-llvm@$versao"
+          echo "$RUNNER_TEMP/delegua-llvm/node_modules/.bin" >> $GITHUB_PATH
+
+      # Execução manual com origem git: compila o delegua-llvm a partir do repositório, para
+      # testar correções ainda não publicadas.
+      - name: Checkout do delegua-llvm
+        if: env.ORIGEM == 'git'
+        uses: actions/checkout@v4
+        with:
+          repository: DesignLiquido/delegua-llvm
+          ref: ${{ github.event.inputs.versao || 'principal' }}
+          path: delegua-llvm
+
+      - name: delegua-llvm do git
+        if: env.ORIGEM == 'git'
         working-directory: delegua-llvm
         run: |
           yarn install --frozen-lockfile
           yarn empacotar
+          mkdir -p "$RUNNER_TEMP/bin"
+          printf '#!/usr/bin/env bash\nexec node "%s/dist/ilc.js" "$@"\n' "$PWD" > "$RUNNER_TEMP/bin/delegua-llvm"
+          chmod +x "$RUNNER_TEMP/bin/delegua-llvm"
+          echo "$RUNNER_TEMP/bin" >> $GITHUB_PATH
+
+      - name: Versão do delegua-llvm
+        run: |
+          command -v delegua-llvm
+          if [ "$ORIGEM" = "npm" ]; then
+            npm ls --prefix "$RUNNER_TEMP/delegua-llvm" @designliquido/delegua-llvm
+          else
+            git -C delegua-llvm log --oneline -1
+          fi
 
       - name: Testes
         run: testes/executar.sh
-        env:
-          ILC: node ${{ github.workspace }}/delegua-llvm/dist/ilc.js
 
       - name: Compilação do programa pacote
         run: |
-          node delegua-llvm/dist/ilc.js fontes/pacote.delegua -o pacote
+          delegua-llvm fontes/pacote.delegua -o pacote
           PACOTECA_URL=http://127.0.0.1:1 fontes/pacote --help | head -1
