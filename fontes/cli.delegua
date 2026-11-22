@@ -9,7 +9,7 @@
 importar { PacoteRegistro, VersaoRegistro, PacotecaJsonc, lerPacotecaJsonc } de "./modelos"
 importar { ErroJsonc } de "./jsonc"
 importar { ClienteRegistro } de "./registro"
-importar { fonteDoRegistro } de "./resolvedor"
+importar { FonteRegistro } de "./resolvedor"
 importar { Instalador, OpcoesInstalacao, nomeManifesto } de "./instalador"
 importar { salvarToken, carregarToken, RetornoAutenticacao, abrirNavegador } de "./autenticacao"
 
@@ -398,7 +398,7 @@ classe Cli {
         opcoes.congelado = argumentos.tem("congelado")
         opcoes.diretorio = isto.diretorio
 
-        var instalador = Instalador(fonteDoRegistro(isto.clienteRegistro(falso)), opcoes)
+        var instalador = Instalador(FonteRegistro(isto.clienteRegistro(falso)), opcoes)
         instalador.git.silencioso = isto.gitSilencioso
         instalador.imprimir = isto.imprimir
         tente {

@@ -5,7 +5,7 @@ importar { Verificador } de "./verificador"
 importar { ClienteRegistro, ErroRegistro } de "../fontes/registro"
 importar { PacoteRegistro, VersaoRegistro } de "../fontes/modelos"
 importar { Trava } de "../fontes/trava"
-importar { Fonte, Resolvido, Resultado, fonteDoRegistro, resolver, ErroResolucao } de "../fontes/resolvedor"
+importar { Fonte, Resolvido, Resultado, FonteRegistro, resolver, ErroResolucao } de "../fontes/resolvedor"
 
 var v = Verificador("registro")
 var processo = importar("processo")
@@ -104,7 +104,7 @@ v.igual(sincronizado.nome, "mat", "sincronizarPacote")
 v.contem(ultimaRequisicao(url), "\"url\":\"/pacotes/mat/sincronizar\"", "rota do sincronizar")
 
 // Resolução com a fonte da pacoteca-api
-var fonte = fonteDoRegistro(anonimo)
+var fonte = FonteRegistro(anonimo)
 var raiz: dicionário = {}
 raiz["mat"] = "^1.0.0"
 var resultado = resolver(fonte, raiz, Trava())
