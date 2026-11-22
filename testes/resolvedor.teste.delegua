@@ -2,7 +2,7 @@
 importar { Verificador } de "./verificador"
 importar { VersaoRegistro } de "../fontes/modelos"
 importar { Trava, PacoteTravado } de "../fontes/trava"
-importar { Fonte, Resultado, Resolvido, resolver, ErroResolucao, ErroConflito } de "../fontes/resolvedor"
+importar { Fonte, FonteMemoria, Resultado, Resolvido, resolver, ErroResolucao, ErroConflito } de "../fontes/resolvedor"
 
 var v = Verificador("resolvedor")
 
@@ -46,7 +46,7 @@ funcao versaoResolvida(resultado: Resultado, nome: texto): texto {
 var nenhuma: texto[] = []
 
 // TestResolveMaiorVersaoQueAtende
-var fonte1 = Fonte()
+var fonte1 = FonteMemoria()
 fonte1.adicionarVersao("mat", publicada("1.0.0", nenhuma))
 fonte1.adicionarVersao("mat", publicada("1.4.2", nenhuma))
 fonte1.adicionarVersao("mat", publicada("2.0.0", nenhuma))
@@ -58,7 +58,7 @@ var mat1: Resolvido = resultado1.obter("mat")
 v.igual(mat1.pacote.versao + " " + mat1.pacote.hashCommit + " " + mat1.pacote.tag, "1.4.2 hash-1.4.2 v1.4.2", "maior versão que atende")
 
 // TestResolveDependenciasTransitivas
-var fonte2 = Fonte()
+var fonte2 = FonteMemoria()
 fonte2.adicionarVersao("web", publicada("1.0.0", ["http@^2.0.0", "json@~1.1.0"]))
 fonte2.adicionarVersao("http", publicada("2.3.0", ["json@^1.0.0"]))
 fonte2.adicionarVersao("http", publicada("3.0.0", nenhuma))
@@ -75,7 +75,7 @@ var nomes2: texto[] = resultado2.nomes()
 v.igual(nomes2.juntar(","), "http,json,web", "nomes()")
 
 // TestResolveConflito
-var fonte3 = Fonte()
+var fonte3 = FonteMemoria()
 fonte3.adicionarVersao("a", publicada("1.0.0", ["json@^2.0.0"]))
 fonte3.adicionarVersao("json", publicada("1.0.0", nenhuma))
 fonte3.adicionarVersao("json", publicada("2.0.0", nenhuma))
@@ -91,7 +91,7 @@ var naoPublicada = publicada("1.9.0", nenhuma)
 naoPublicada.tagGitHub = ""
 var suspensa = publicada("1.8.0", nenhuma)
 suspensa.nivelVerificacao = "suspenso"
-var fonte4 = Fonte()
+var fonte4 = FonteMemoria()
 fonte4.adicionarVersao("mat", publicada("1.0.0", nenhuma))
 fonte4.adicionarVersao("mat", naoPublicada)
 fonte4.adicionarVersao("mat", suspensa)
@@ -105,7 +105,7 @@ v.contem(erroAoResolver(fonte4, raiz4b, Trava()), "suspensas", "erro de suspens�
 // TestResolveSemVersoesPublicadas
 var semCommit = publicada("1.0.0", nenhuma)
 semCommit.hashCommit = ""
-var fonte5 = Fonte()
+var fonte5 = FonteMemoria()
 fonte5.adicionarVersao("mat", semCommit)
 var raiz5: dicionário = {}
 raiz5["mat"] = "*"
@@ -114,10 +114,10 @@ v.contem(erroAoResolver(fonte5, raiz5, Trava()), "não tem versões publicadas",
 // TestResolvePacoteInexistente
 var raiz6: dicionário = {}
 raiz6["nada"] = "*"
-v.contem(erroAoResolver(Fonte(), raiz6, Trava()), "não encontrado", "pacote inexistente")
+v.contem(erroAoResolver(FonteMemoria(), raiz6, Trava()), "não encontrado", "pacote inexistente")
 
 // TestResolvePrefereVersaoTravada
-var fonte7 = Fonte()
+var fonte7 = FonteMemoria()
 fonte7.adicionarVersao("mat", publicada("1.0.0", nenhuma))
 fonte7.adicionarVersao("mat", publicada("1.2.0", nenhuma))
 var travado7 = Trava()
@@ -131,7 +131,7 @@ raiz7b["mat"] = "^1.1.0"
 v.igual(versaoResolvida(resolver(fonte7, raiz7b, travado7), "mat"), "1.2.0", "travada que não atende é trocada")
 
 // TestResolveDetectaCommitAdulterado
-var fonte8 = Fonte()
+var fonte8 = FonteMemoria()
 fonte8.adicionarVersao("mat", publicada("1.0.0", nenhuma))
 var travado8 = Trava()
 travado8.definir("mat", PacoteTravado("1.0.0", "outro-hash"))
@@ -140,14 +140,14 @@ raiz8["mat"] = "^1.0.0"
 v.contem(erroAoResolver(fonte8, raiz8, travado8), "adulteração", "commit adulterado")
 
 // TestResolveRestricaoInvalida
-var fonte9 = Fonte()
+var fonte9 = FonteMemoria()
 fonte9.adicionarVersao("mat", publicada("1.0.0", nenhuma))
 var raiz9: dicionário = {}
 raiz9["mat"] = "abc"
 v.contem(erroAoResolver(fonte9, raiz9, Trava()), "restrição de versão inválida", "restrição inválida")
 
 // TestTravaDoResultado
-var fonte10 = Fonte()
+var fonte10 = FonteMemoria()
 fonte10.adicionarVersao("mat", publicada("1.0.0", nenhuma))
 var raiz10: dicionário = {}
 raiz10["mat"] = "*"

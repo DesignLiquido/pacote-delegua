@@ -107,9 +107,9 @@ classe Restricao {
 
 // Versão possivelmente incompleta: "1", "1.2", "1.2.x".
 classe Parcial {
-    maior: inteiro
-    menor: inteiro
-    correcao: inteiro
+    maior: longo
+    menor: longo
+    correcao: longo
     // Quantas partes numéricas foram informadas (0 a 3).
     informadas: inteiro
     preLancamento: texto[]
@@ -203,7 +203,7 @@ funcao analisarParcial(entrada: texto): Parcial {
             curinga = verdadeiro
         }
         se nao curinga {
-            var valor: inteiro = inteiro(parte)
+            var valor: longo = longo(parte)
             se i == 0 {
                 parcial.maior = valor
             }
@@ -230,7 +230,7 @@ funcao analisarParcial(entrada: texto): Parcial {
 }
 
 // Limite superior exclusivo "<X.Y.Z-0", menor que qualquer pré-lançamento de X.Y.Z.
-funcao limite(maior: inteiro, menor: inteiro, correcao: inteiro): Comparador {
+funcao limite(maior: longo, menor: longo, correcao: longo): Comparador {
     var versao = Versao(maior, menor, correcao)
     versao.preLancamento.adicionar("0")
     retorna Comparador("<", versao, verdadeiro)

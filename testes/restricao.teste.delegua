@@ -39,6 +39,7 @@ funcao restricaoValida(entrada: texto): lógico {
 var v = Verificador("restricao")
 var nenhuma: texto[] = []
 
+// Os dois últimos exemplos têm componentes acima de 32 bits (`longo`).
 var exemplos: Exemplo[] = [
     Exemplo("1.2.3", ["1.2.3"], ["1.2.4", "1.2.2", "1.2.3-beta"]),
     Exemplo("=1.2.3", ["1.2.3"], ["1.2.4"]),
@@ -65,7 +66,9 @@ var exemplos: Exemplo[] = [
     Exemplo("<=1.2.3", ["1.2.3"], ["1.2.4"]),
     Exemplo("^1.0.0 || ^3.0.0", ["1.5.0", "3.1.0"], ["2.0.0", "4.0.0"]),
     Exemplo("^1.2.3-beta.2", ["1.2.3-beta.2", "1.2.3-beta.10", "1.2.3", "1.5.0"], ["1.2.3-beta.1", "1.2.4-beta", "2.0.0"]),
-    Exemplo("v1.2.3", ["1.2.3"], nenhuma)
+    Exemplo("v1.2.3", ["1.2.3"], nenhuma),
+    Exemplo("^4294967296.0.0", ["4294967296.0.0", "4294967296.9.0"], ["4294967297.0.0", "4294967295.9.9"]),
+    Exemplo("~1.4294967296", ["1.4294967296.5"], ["1.4294967297.0"])
 ]
 para cada exemplo em exemplos {
     verificarCaso(v, exemplo)

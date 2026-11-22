@@ -41,6 +41,12 @@ para (var i = 0; i < ordem.tamanho(); i = i + 1) {
     }
 }
 
+// Componentes de até 18 dígitos (`longo`).
+v.verificar(versaoValida("123456789012345678.0.0"), "18 dígitos deveriam caber")
+v.verificar(nao versaoValida("1234567890123456789.0.0"), "19 dígitos deveriam ser inválidos")
+v.verificar(compararVersoes(analisarVersao("10000000000.0.0"), analisarVersao("9999999999.0.0")) == 1, "comparar componentes acima de 32 bits")
+v.igual(textoVersao(analisarVersao("4294967296.1.2")), "4294967296.1.2", "textoVersao acima de 32 bits")
+
 // Metadados não afetam a precedência.
 v.verificar(compararVersoes(analisarVersao("1.0.0+a"), analisarVersao("1.0.0+b")) == 0, "metadados não devem afetar a precedência")
 

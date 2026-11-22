@@ -18,14 +18,14 @@ on:
           - npm
           - git
       versao:
-        description: 'Versão do npm (ex.: ^9.3.1) ou ramo, tag ou commit do git'
+        description: 'Versão do npm (ex.: ^10.0.1) ou ramo, tag ou commit do git'
         required: false
         default: ''
 
 env:
-  LLVM_VERSION_MAJOR: 22
+  LLVM_VERSION_MAJOR: 23
   # Versão do delegua-llvm usada em push e PR.
-  DELEGUA_LLVM_NPM: '^9.3.1'
+  DELEGUA_LLVM_NPM: '^10.0.1'
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 jobs:
@@ -46,7 +46,7 @@ jobs:
         with:
           node-version: 24.x
 
-      - name: LLVM 22, clang e libcurl
+      - name: LLVM ${{ env.LLVM_VERSION_MAJOR }}, clang e libcurl
         run: |
           sudo apt-get update
           sudo apt-get install -y wget gnupg lsb-release software-properties-common ninja-build libcurl4-openssl-dev

@@ -3,7 +3,7 @@
 importar { Verificador } de "./verificador"
 importar { VersaoRegistro } de "../fontes/modelos"
 importar { Trava, PacoteTravado, lerTrava, gravarTrava, nomeArquivoTrava } de "../fontes/trava"
-importar { Fonte } de "../fontes/resolvedor"
+importar { Fonte, FonteMemoria } de "../fontes/resolvedor"
 importar { Instalador, OpcoesInstalacao, Especificacao, separarEspecificacao, especificacaoNpm, nomeManifesto } de "../fontes/instalador"
 
 var v = Verificador("instalador")
@@ -32,7 +32,7 @@ funcao versao(numero: texto, realizacoes: texto[], dependencias: texto[]): Versa
 
 funcao fonteExemplo(nivelTexto201: texto): Fonte {
     var nenhuma: texto[] = []
-    var fonte = Fonte()
+    var fonte = FonteMemoria()
     fonte.adicionarVersao("web", versao("1.0.0", ["node"], ["json@^1.0.0", "texto@~2.0.0"]))
     var json = versao("1.1.0", ["node", "llvm"], nenhuma)
     json.pacoteNpm = "@designliquido/delegua-json"

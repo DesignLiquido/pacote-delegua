@@ -1,8 +1,8 @@
 // Versões semânticas (https://semver.org) no formato
 // MAIOR.MENOR.CORRECAO[-pre.lancamento][+metadados].
 //
-// Porte de interno/semver/semver.go do pacote-go. Diferença: MAIOR, MENOR e CORRECAO
-// são `inteiro` e aceitam até 9 dígitos (o pacote-go usa inteiros de 64 bits).
+// Porte de interno/semver/semver.go do pacote-go. MAIOR, MENOR e CORRECAO são `longo`
+// (64 bits com sinal) e aceitam até 18 dígitos; o pacote-go usa `uint64`, até 20.
 
 classe ErroVersaoInvalida herda Excecao {
     construtor(mensagem: texto) {
@@ -11,12 +11,12 @@ classe ErroVersaoInvalida herda Excecao {
 }
 
 classe Versao {
-    maior: inteiro
-    menor: inteiro
-    correcao: inteiro
+    maior: longo
+    menor: longo
+    correcao: longo
     preLancamento: texto[]
 
-    construtor(maior: inteiro, menor: inteiro, correcao: inteiro) {
+    construtor(maior: longo, menor: longo, correcao: longo) {
         isto.maior = maior
         isto.menor = menor
         isto.correcao = correcao
@@ -24,9 +24,9 @@ classe Versao {
     }
 }
 
-// Máximo de dígitos de um componente numérico (cabe em `inteiro`).
+// Máximo de dígitos de um componente numérico (cabe em `longo`).
 funcao maximoDigitos(): inteiro {
-    retorna 9
+    retorna 18
 }
 
 funcao ehDigitos(valor: texto): lógico {
@@ -106,7 +106,7 @@ funcao analisarVersao(entrada: texto): Versao {
         }
     }
 
-    var versao = Versao(inteiro(partes[0]), inteiro(partes[1]), inteiro(partes[2]))
+    var versao = Versao(longo(partes[0]), longo(partes[1]), longo(partes[2]))
     se temPreLancamento {
         var identificadores = preLancamento.dividir(".")
         para cada identificador em identificadores {
@@ -125,15 +125,15 @@ funcao analisarVersao(entrada: texto): Versao {
 
 // -1, 0 ou 1 conforme a seja menor, igual ou maior que b. Metadados não contam.
 funcao compararVersoes(a: Versao, b: Versao): inteiro {
-    var resultado: inteiro = compararInteiros(a.maior, b.maior)
+    var resultado: inteiro = compararLongos(a.maior, b.maior)
     se resultado != 0 {
         retorna resultado
     }
-    resultado = compararInteiros(a.menor, b.menor)
+    resultado = compararLongos(a.menor, b.menor)
     se resultado != 0 {
         retorna resultado
     }
-    resultado = compararInteiros(a.correcao, b.correcao)
+    resultado = compararLongos(a.correcao, b.correcao)
     se resultado != 0 {
         retorna resultado
     }
@@ -202,6 +202,16 @@ funcao compararIdentificadores(a: texto, b: texto): inteiro {
 }
 
 funcao compararInteiros(a: inteiro, b: inteiro): inteiro {
+    se a < b {
+        retorna -1
+    }
+    se a > b {
+        retorna 1
+    }
+    retorna 0
+}
+
+funcao compararLongos(a: longo, b: longo): inteiro {
     se a < b {
         retorna -1
     }

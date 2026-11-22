@@ -36,7 +36,13 @@ classe ErroFonte herda Excecao {
     }
 }
 
-// Versões de um pacote na fonte, e quantas vezes foram consultadas.
+// Dados do registro usados na resolução. Erros da fonte viram ErroFonte.
+interface Fonte {
+    buscarPacote(nome: texto): PacoteRegistro
+    listarVersoes(nome: texto): VersaoRegistro[]
+}
+
+// Versões de um pacote, e quantas vezes foram consultadas.
 classe ListaVersoes {
     itens: VersaoRegistro[]
     consultas: inteiro
@@ -47,18 +53,13 @@ classe ListaVersoes {
     }
 }
 
-// Dados do registro usados na resolução: da pacoteca-api (fonteDoRegistro) ou guardados
-// em memória (adicionarVersao, para testes). Erros do registro viram ErroFonte.
-classe Fonte {
-    // nome → ListaVersoes, quando em memória
+// Fonte com os pacotes guardados em memória, para testes.
+classe FonteMemoria implementa Fonte {
+    // nome → ListaVersoes
     pacotes: dicionário
-    registro: ClienteRegistro
-    usaRegistro: lógico
 
     construtor() {
         isto.pacotes = {}
-        isto.registro = ClienteRegistro("", "")
-        isto.usaRegistro = falso
     }
 
     adicionarVersao(nome: texto, versao: VersaoRegistro) {
@@ -70,42 +71,22 @@ classe Fonte {
     }
 
     buscarPacote(nome: texto): PacoteRegistro {
-        se isto.usaRegistro {
-            tente {
-                retorna isto.registro.buscarPacote(nome)
-            } pegue (erro: ErroRegistro) {
-                falhar ErroFonte(erro.mensagem)
-            }
-        }
         se nao isto.pacotes.contem(nome) {
             falhar ErroFonte("não encontrado")
         }
         retorna PacoteRegistro(nome, "https://github.com/org/" + nome)
     }
 
-    listarVersoes(nome: texto): ListaVersoes {
-        se isto.usaRegistro {
-            var lista = ListaVersoes()
-            tente {
-                var versoes: VersaoRegistro[] = isto.registro.listarVersoes(nome)
-                para cada versao em versoes {
-                    lista.itens.adicionar(versao)
-                }
-            } pegue (erro: ErroRegistro) {
-                falhar ErroFonte(erro.mensagem)
-            }
-            lista.consultas = 1
-            retorna lista
-        }
+    listarVersoes(nome: texto): VersaoRegistro[] {
         se nao isto.pacotes.contem(nome) {
             falhar ErroFonte("não encontrado")
         }
         var lista: ListaVersoes = isto.pacotes[nome]
         lista.consultas = lista.consultas + 1
-        retorna lista
+        retorna lista.itens
     }
 
-    // Quantas vezes as versões do pacote foram listadas (só em memória).
+    // Quantas vezes as versões do pacote foram listadas.
     consultas(nome: texto): inteiro {
         var total: inteiro = 0
         se isto.pacotes.contem(nome) {
@@ -117,11 +98,28 @@ classe Fonte {
 }
 
 // Fonte que consulta a pacoteca-api.
-funcao fonteDoRegistro(registro: ClienteRegistro): Fonte {
-    var fonte = Fonte()
-    fonte.registro = registro
-    fonte.usaRegistro = verdadeiro
-    retorna fonte
+classe FonteRegistro implementa Fonte {
+    registro: ClienteRegistro
+
+    construtor(registro: ClienteRegistro) {
+        isto.registro = registro
+    }
+
+    buscarPacote(nome: texto): PacoteRegistro {
+        tente {
+            retorna isto.registro.buscarPacote(nome)
+        } pegue (erro: ErroRegistro) {
+            falhar ErroFonte(erro.mensagem)
+        }
+    }
+
+    listarVersoes(nome: texto): VersaoRegistro[] {
+        tente {
+            retorna isto.registro.listarVersoes(nome)
+        } pegue (erro: ErroRegistro) {
+            falhar ErroFonte(erro.mensagem)
+        }
+    }
 }
 
 // Pacote com a versão escolhida.
@@ -230,8 +228,7 @@ funcao versaoSatisfaz(restricao: Restricao, versao: texto): lógico {
 
 // A maior versão publicada que atende à restrição, preferindo a fixada no pacoteca.lock.
 // Versões suspensas nunca são escolhidas.
-funcao escolherVersao(nome: texto, lista: ListaVersoes, restricao: Restricao, travado: Trava): VersaoRegistro {
-    var versoes: VersaoRegistro[] = lista.itens
+funcao escolherVersao(nome: texto, versoes: VersaoRegistro[], restricao: Restricao, travado: Trava): VersaoRegistro {
     var candidatas: VersaoRegistro[] = []
     var publicadas = 0
     var suspensas = 0
@@ -361,12 +358,15 @@ funcao resolver(fonte: Fonte, raiz: dicionário, travado: Trava): Resultado {
 
             se nao cacheVersoes.contem(atual.nome) {
                 tente {
-                    cacheVersoes[atual.nome] = fonte.listarVersoes(atual.nome)
+                    var lista = ListaVersoes()
+                    lista.itens = fonte.listarVersoes(atual.nome)
+                    cacheVersoes[atual.nome] = lista
                 } pegue (erro: ErroFonte) {
                     falhar ErroResolucao("erro ao listar versões de '" + atual.nome + "': " + erro.mensagem)
                 }
             }
-            var versoes: ListaVersoes = cacheVersoes[atual.nome]
+            var listaVersoes: ListaVersoes = cacheVersoes[atual.nome]
+            var versoes: VersaoRegistro[] = listaVersoes.itens
 
             var escolhida = VersaoRegistro("")
             tente {
